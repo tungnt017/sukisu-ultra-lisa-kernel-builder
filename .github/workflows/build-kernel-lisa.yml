@@ -214,164 +214,164 @@ jobs:
           else
             # Insert extern declarations before do_execveat_common
             sed -i '/^static int do_execveat_common/i \
-#ifdef CONFIG_KSU\
-extern bool ksu_execveat_hook __read_mostly;\
-extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,\
-\t\t\tvoid *envp, int *flags);\
-extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,\
-\t\t\t\t void *argv, void *envp, int *flags);\
-#endif' "$FILE"
-
-            # Insert hook call BEFORE the return statement (safe — always after declarations)
-            sed -i '/^static int do_execveat_common/,/return .*__do_execve/ {
-              /return .*__do_execve/i \
-#ifdef CONFIG_KSU\
-\tif (unlikely(ksu_execveat_hook))\
-\t\tksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\
-\telse\
-\t\tksu_handle_execveat_sucompat(\&fd, \&filename, \&argv, \&envp, \&flags);\
-#endif
-            }' "$FILE"
-            echo "    [OK]"
-          fi
-
-          # ─── 2. fs/open.c (FIX #1: avoid C99 declaration-after-statement) ───
-          FILE="fs/open.c"
-          echo ">>> Patching $FILE ..."
-          if grep -q "ksu_handle_faccessat" "$FILE"; then
-            echo "    [SKIP] already patched."
-          else
-            if grep -q "^long do_faccessat" "$FILE"; then
-              TARGET="do_faccessat"
-              # Insert extern declarations BEFORE the function
-              sed -i '/^long do_faccessat/i \
-#ifdef CONFIG_KSU\
-extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,\
-\t\t\t int *flags);\
-#endif' "$FILE"
-
-              # FIX: Insert hook BEFORE "if (mode & ~S_IRWXO)" — which is after all variable declarations
-              sed -i '/^long do_faccessat/,/if (mode & ~S_IRWXO)/ {
-                /if (mode & ~S_IRWXO)/i \
-#ifdef CONFIG_KSU\
-\tksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);\
-#endif
-              }' "$FILE"
-            else
-              TARGET="SYSCALL_DEFINE3(faccessat"
-              sed -i '/SYSCALL_DEFINE3(faccessat/i \
-#ifdef CONFIG_KSU\
-extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,\
-\t\t\t int *flags);\
-#endif' "$FILE"
-              # Insert BEFORE "if (mode & ~S_IRWXO)" inside the syscall
-              sed -i '/SYSCALL_DEFINE3(faccessat/,/if (mode & ~S_IRWXO)/ {
-                /if (mode & ~S_IRWXO)/i \
-#ifdef CONFIG_KSU\
-\tksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);\
-#endif
-              }' "$FILE"
-            fi
-            echo "    [OK] (target: $TARGET)"
-          fi
-
-          # ─── 3. fs/read_write.c ───
-          FILE="fs/read_write.c"
-          echo ">>> Patching $FILE ..."
-          if grep -q "ksu_handle_vfs_read" "$FILE"; then
-            echo "    [SKIP] already patched."
-          else
-            sed -i '/^ssize_t vfs_read/i \
-#ifdef CONFIG_KSU\
-extern bool ksu_vfs_read_hook __read_mostly;\
-extern int ksu_handle_vfs_read(struct file **file_ptr, char __user **buf_ptr,\
-\t\t\tsize_t *count_ptr, loff_t **pos);\
-#endif' "$FILE"
-
-            # Insert BEFORE "if (!(file->f_mode & FMODE_READ))" — safely after declarations
-            sed -i '/^ssize_t vfs_read/,/if (!(file->f_mode & FMODE_READ))/ {
-              /if (!(file->f_mode & FMODE_READ))/i \
-#ifdef CONFIG_KSU\
-\tif (unlikely(ksu_vfs_read_hook))\
-\t\tksu_handle_vfs_read(\&file, \&buf, \&count, \&pos);\
-#endif
-            }' "$FILE"
-            echo "    [OK]"
-          fi
-
-          # ─── 4. fs/stat.c ───
-          FILE="fs/stat.c"
-          echo ">>> Patching $FILE ..."
-          if grep -q "ksu_handle_stat" "$FILE"; then
-            echo "    [SKIP] already patched."
-          else
-            if grep -q "int vfs_statx" "$FILE"; then
-              FUNC="vfs_statx"
-              sed -i '/^int vfs_statx/i \
-#ifdef CONFIG_KSU\
-extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\
-#endif' "$FILE"
-              # Insert BEFORE the first if statement
-              sed -i '/^int vfs_statx/,/if ((flags &/ {
-                /if ((flags &/i \
-#ifdef CONFIG_KSU\
-\tksu_handle_stat(\&dfd, \&filename, \&flags);\
-#endif
-              }' "$FILE"
-            else
-              FUNC="vfs_fstatat"
-              sed -i '/^int vfs_fstatat/i \
-#ifdef CONFIG_KSU\
-extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\
-#endif' "$FILE"
-              sed -i '/^int vfs_fstatat/,/if ((flag &/ {
-                /if ((flag &/i \
-#ifdef CONFIG_KSU\
-\tksu_handle_stat(\&dfd, \&filename, \&flag);\
-#endif
-              }' "$FILE"
-            fi
-            echo "    [OK] (function: $FUNC)"
-          fi
-
-          # ─── 5. drivers/input/input.c ───
-          FILE="drivers/input/input.c"
-          echo ">>> Patching $FILE ..."
-          if grep -q "ksu_handle_input_handle_event" "$FILE"; then
-            echo "    [SKIP] already patched."
-          else
-            sed -i '/^static void input_handle_event/i \
-#ifdef CONFIG_KSU\
-extern bool ksu_input_hook __read_mostly;\
-extern int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value);\
-#endif' "$FILE"
-            # Insert AFTER "int disposition = ..." line (which is a declaration and first statement)
-            sed -i '/^static void input_handle_event/,/if (disposition != INPUT_IGNORE_EVENT/ {
-              /if (disposition != INPUT_IGNORE_EVENT/i \
-#ifdef CONFIG_KSU\
-\tif (unlikely(ksu_input_hook))\
-\t\tksu_handle_input_handle_event(\&type, \&code, \&value);\
-#endif
-            }' "$FILE"
-            echo "    [OK]"
-          fi
-
-          # ─── 6. fs/devpts/inode.c ───
-          FILE="fs/devpts/inode.c"
-          echo ">>> Patching $FILE ..."
-          if grep -q "ksu_handle_devpts" "$FILE"; then
-            echo "    [SKIP] already patched."
-          else
-            sed -i '/^void \*devpts_get_priv/i \
-#ifdef CONFIG_KSU\
-extern int ksu_handle_devpts(struct inode*);\
-#endif' "$FILE"
-            # Insert BEFORE the first if statement inside the function
-            sed -i '/^void \*devpts_get_priv/,/if (dentry->d_sb->s_magic/ {
-              /if (dentry->d_sb->s_magic/i \
-#ifdef CONFIG_KSU\
-\tksu_handle_devpts(dentry->d_inode);\
-#endif
+          #ifdef CONFIG_KSU\
+          extern bool ksu_execveat_hook __read_mostly;\
+          extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,\
+          \t\t\tvoid *envp, int *flags);\
+          extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,\
+          \t\t\t\t void *argv, void *envp, int *flags);\
+          #endif' "$FILE"
+          
+                      # Insert hook call BEFORE the return statement (safe — always after declarations)
+                      sed -i '/^static int do_execveat_common/,/return .*__do_execve/ {
+                        /return .*__do_execve/i \
+          #ifdef CONFIG_KSU\
+          \tif (unlikely(ksu_execveat_hook))\
+          \t\tksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\
+          \telse\
+          \t\tksu_handle_execveat_sucompat(\&fd, \&filename, \&argv, \&envp, \&flags);\
+          #endif
+                      }' "$FILE"
+                      echo "    [OK]"
+                    fi
+          
+                    # ─── 2. fs/open.c (FIX #1: avoid C99 declaration-after-statement) ───
+                    FILE="fs/open.c"
+                    echo ">>> Patching $FILE ..."
+                    if grep -q "ksu_handle_faccessat" "$FILE"; then
+                      echo "    [SKIP] already patched."
+                    else
+                      if grep -q "^long do_faccessat" "$FILE"; then
+                        TARGET="do_faccessat"
+                        # Insert extern declarations BEFORE the function
+                        sed -i '/^long do_faccessat/i \
+          #ifdef CONFIG_KSU\
+          extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,\
+          \t\t\t int *flags);\
+          #endif' "$FILE"
+          
+                        # FIX: Insert hook BEFORE "if (mode & ~S_IRWXO)" — which is after all variable declarations
+                        sed -i '/^long do_faccessat/,/if (mode & ~S_IRWXO)/ {
+                          /if (mode & ~S_IRWXO)/i \
+          #ifdef CONFIG_KSU\
+          \tksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);\
+          #endif
+                        }' "$FILE"
+                      else
+                        TARGET="SYSCALL_DEFINE3(faccessat"
+                        sed -i '/SYSCALL_DEFINE3(faccessat/i \
+          #ifdef CONFIG_KSU\
+          extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,\
+          \t\t\t int *flags);\
+          #endif' "$FILE"
+                        # Insert BEFORE "if (mode & ~S_IRWXO)" inside the syscall
+                        sed -i '/SYSCALL_DEFINE3(faccessat/,/if (mode & ~S_IRWXO)/ {
+                          /if (mode & ~S_IRWXO)/i \
+          #ifdef CONFIG_KSU\
+          \tksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);\
+          #endif
+                        }' "$FILE"
+                      fi
+                      echo "    [OK] (target: $TARGET)"
+                    fi
+          
+                    # ─── 3. fs/read_write.c ───
+                    FILE="fs/read_write.c"
+                    echo ">>> Patching $FILE ..."
+                    if grep -q "ksu_handle_vfs_read" "$FILE"; then
+                      echo "    [SKIP] already patched."
+                    else
+                      sed -i '/^ssize_t vfs_read/i \
+          #ifdef CONFIG_KSU\
+          extern bool ksu_vfs_read_hook __read_mostly;\
+          extern int ksu_handle_vfs_read(struct file **file_ptr, char __user **buf_ptr,\
+          \t\t\tsize_t *count_ptr, loff_t **pos);\
+          #endif' "$FILE"
+          
+                      # Insert BEFORE "if (!(file->f_mode & FMODE_READ))" — safely after declarations
+                      sed -i '/^ssize_t vfs_read/,/if (!(file->f_mode & FMODE_READ))/ {
+                        /if (!(file->f_mode & FMODE_READ))/i \
+          #ifdef CONFIG_KSU\
+          \tif (unlikely(ksu_vfs_read_hook))\
+          \t\tksu_handle_vfs_read(\&file, \&buf, \&count, \&pos);\
+          #endif
+                      }' "$FILE"
+                      echo "    [OK]"
+                    fi
+          
+                    # ─── 4. fs/stat.c ───
+                    FILE="fs/stat.c"
+                    echo ">>> Patching $FILE ..."
+                    if grep -q "ksu_handle_stat" "$FILE"; then
+                      echo "    [SKIP] already patched."
+                    else
+                      if grep -q "int vfs_statx" "$FILE"; then
+                        FUNC="vfs_statx"
+                        sed -i '/^int vfs_statx/i \
+          #ifdef CONFIG_KSU\
+          extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\
+          #endif' "$FILE"
+                        # Insert BEFORE the first if statement
+                        sed -i '/^int vfs_statx/,/if ((flags &/ {
+                          /if ((flags &/i \
+          #ifdef CONFIG_KSU\
+          \tksu_handle_stat(\&dfd, \&filename, \&flags);\
+          #endif
+                        }' "$FILE"
+                      else
+                        FUNC="vfs_fstatat"
+                        sed -i '/^int vfs_fstatat/i \
+          #ifdef CONFIG_KSU\
+          extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\
+          #endif' "$FILE"
+                        sed -i '/^int vfs_fstatat/,/if ((flag &/ {
+                          /if ((flag &/i \
+          #ifdef CONFIG_KSU\
+          \tksu_handle_stat(\&dfd, \&filename, \&flag);\
+          #endif
+                        }' "$FILE"
+                      fi
+                      echo "    [OK] (function: $FUNC)"
+                    fi
+          
+                    # ─── 5. drivers/input/input.c ───
+                    FILE="drivers/input/input.c"
+                    echo ">>> Patching $FILE ..."
+                    if grep -q "ksu_handle_input_handle_event" "$FILE"; then
+                      echo "    [SKIP] already patched."
+                    else
+                      sed -i '/^static void input_handle_event/i \
+          #ifdef CONFIG_KSU\
+          extern bool ksu_input_hook __read_mostly;\
+          extern int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value);\
+          #endif' "$FILE"
+                      # Insert AFTER "int disposition = ..." line (which is a declaration and first statement)
+                      sed -i '/^static void input_handle_event/,/if (disposition != INPUT_IGNORE_EVENT/ {
+                        /if (disposition != INPUT_IGNORE_EVENT/i \
+          #ifdef CONFIG_KSU\
+          \tif (unlikely(ksu_input_hook))\
+          \t\tksu_handle_input_handle_event(\&type, \&code, \&value);\
+          #endif
+                      }' "$FILE"
+                      echo "    [OK]"
+                    fi
+          
+                    # ─── 6. fs/devpts/inode.c ───
+                    FILE="fs/devpts/inode.c"
+                    echo ">>> Patching $FILE ..."
+                    if grep -q "ksu_handle_devpts" "$FILE"; then
+                      echo "    [SKIP] already patched."
+                    else
+                      sed -i '/^void \*devpts_get_priv/i \
+          #ifdef CONFIG_KSU\
+          extern int ksu_handle_devpts(struct inode*);\
+          #endif' "$FILE"
+                      # Insert BEFORE the first if statement inside the function
+                      sed -i '/^void \*devpts_get_priv/,/if (dentry->d_sb->s_magic/ {
+                        /if (dentry->d_sb->s_magic/i \
+          #ifdef CONFIG_KSU\
+          \tksu_handle_devpts(dentry->d_inode);\
+          #endif
             }' "$FILE"
             echo "    [OK]"
           fi
