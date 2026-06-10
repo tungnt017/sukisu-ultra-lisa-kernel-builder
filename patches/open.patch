@@ -1,12 +1,22 @@
 --- a/fs/open.c
 +++ b/fs/open.c
-@@ -XXX,6 +XXX,10 @@
+@@ Description: Hook do_faccessat()
+ 
+ !!! IMPORTANT — C99 FIX !!!
+ Insert hook code BEFORE "if (mode & ~S_IRWXO)" — NOT after the opening brace.
+ This ensures we are AFTER all variable declarations, avoiding:
+   "error: mixing declarations and code is a C99 extension"
+
 +#ifdef CONFIG_KSU
 +extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,
 +			 int *flags);
 +#endif
  long do_faccessat(int dfd, const char __user *filename, int mode)
  {
+ 	const struct cred *old_cred;
+ 	struct cred *override_cred;
+ 	/* ... more declarations ... */
+ 	unsigned int lookup_flags = LOOKUP_FOLLOW;
 +#ifdef CONFIG_KSU
 +	ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
 +#endif

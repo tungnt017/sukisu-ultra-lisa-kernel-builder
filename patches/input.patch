@@ -1,6 +1,9 @@
 --- a/drivers/input/input.c
 +++ b/drivers/input/input.c
-@@ -XXX,6 +XXX,10 @@
+@@ Description: Hook input_handle_event() — Safe Mode
+
+ Insert BEFORE "if (disposition != INPUT_IGNORE_EVENT" — after declarations.
+
 +#ifdef CONFIG_KSU
 +extern bool ksu_input_hook __read_mostly;
 +extern int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value);
@@ -13,3 +16,4 @@
 +	if (unlikely(ksu_input_hook))
 +		ksu_handle_input_handle_event(&type, &code, &value);
 +#endif
+ 	if (disposition != INPUT_IGNORE_EVENT && type != EV_SYN)
