@@ -1,0 +1,462 @@
+name: Build SukiSU-Ultra Kernel (lisa)
+
+on:
+  workflow_dispatch:
+    inputs:
+      KERNEL_REPO:
+        description: "Kernel source repo (HTTPS) — must contain build.sh"
+        required: true
+        default: "https://github.com/AcmeUI-Devices/android_kernel_xiaomi_lisa"
+      KERNEL_BRANCH:
+        description: "Kernel source branch"
+        required: true
+        default: "main"
+      SUKISU_BRANCH:
+        description: "SukiSU-Ultra branch (main / builtin)"
+        required: true
+        default: "main"
+        type: choice
+        options:
+          - main
+          - builtin
+      DEFCONFIG:
+        description: "Defconfig name (relative to arch/arm64/configs/)"
+        required: true
+        default: "vendor/lisa_defconfig"
+      CLANG_URL:
+        description: "Clang toolchain tarball URL"
+        required: true
+        default: "https://github.com/ZyCromerZ/Clang/releases/download/21.0.0-20250517-release/Clang-21.0.0-20250517.tar.gz"
+      BUILD_ARGS:
+        description: "Extra arguments to pass to kernel build.sh (optional)"
+        required: false
+        default: ""
+      ENABLE_KPM:
+        description: "Enable KPM support"
+        required: false
+        default: true
+        type: boolean
+      ANYKERNEL_REPO:
+        description: "AnyKernel3 repo"
+        required: true
+        default: "https://github.com/osm0sis/AnyKernel3"
+
+jobs:
+  build:
+    name: Build Kernel
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      # ── checkout this repo (contains patches, anykernel.sh) ──
+      - name: Checkout builder repo
+        uses: actions/checkout@v4
+
+      # ── install host dependencies ──
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ca-certificates cpio curl \
+            flex git gnupg libelf-dev libssl-dev lld llvm \
+            python3 python-is-python3 zip unzip wget \
+            device-tree-compiler gcc-aarch64-linux-gnu
+
+      # ── set up Clang toolchain ──
+      - name: Setup Clang toolchain
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/toolchain/clang
+          echo ">>> Downloading Clang..."
+          wget -q "${{ github.event.inputs.CLANG_URL }}" -O clang.tar.gz
+          tar -xf clang.tar.gz -C $GITHUB_WORKSPACE/toolchain/clang --strip-components=1
+          rm -f clang.tar.gz
+          echo "$GITHUB_WORKSPACE/toolchain/clang/bin" >> $GITHUB_PATH
+          echo ">>> Clang version:"
+          $GITHUB_WORKSPACE/toolchain/clang/bin/clang --version || true
+
+      # ── clone kernel source (must contain its own build.sh) ──
+      - name: Clone kernel source
+        run: |
+          echo ">>> Cloning kernel: ${{ github.event.inputs.KERNEL_REPO }} @ ${{ github.event.inputs.KERNEL_BRANCH }}"
+          git clone --depth=1 \
+            -b "${{ github.event.inputs.KERNEL_BRANCH }}" \
+            "${{ github.event.inputs.KERNEL_REPO }}" \
+            $GITHUB_WORKSPACE/kernel
+          echo "KERNEL_DIR=$GITHUB_WORKSPACE/kernel" >> $GITHUB_ENV
+
+          # Verify build.sh exists in kernel source
+          if [ -f "$GITHUB_WORKSPACE/kernel/build.sh" ]; then
+            echo ">>> ✅ build.sh found in kernel source."
+          else
+            echo "::error::build.sh NOT found in kernel source root!"
+            echo ">>> Listing kernel root directory:"
+            ls -la $GITHUB_WORKSPACE/kernel/
+            exit 1
+          fi
+
+      # ── integrate SukiSU-Ultra ──
+      - name: Integrate SukiSU-Ultra
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          echo ">>> Integrating SukiSU-Ultra (${{ github.event.inputs.SUKISU_BRANCH }})..."
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" \
+            | bash -s "${{ github.event.inputs.SUKISU_BRANCH }}"
+          echo ">>> SukiSU-Ultra integration done."
+
+      # ── apply manual hook patches (sed-based, robust) ──
+      - name: Apply manual hook patches
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          set -e
+          echo "============================================"
+          echo ">>> Applying SukiSU manual hook patches"
+          echo "============================================"
+
+          # ─── 1. fs/exec.c ───
+          FILE="fs/exec.c"
+          echo ">>> Patching $FILE ..."
+          if grep -q "CONFIG_KSU" "$FILE"; then
+            echo "    [SKIP] already patched."
+          else
+            # Insert extern declarations before do_execveat_common
+            sed -i '/^static int do_execveat_common/i \
+#ifdef CONFIG_KSU\
+extern bool ksu_execveat_hook __read_mostly;\
+extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,\
+\t\t\tvoid *envp, int *flags);\
+extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,\
+\t\t\t\t void *argv, void *envp, int *flags);\
+#endif' "$FILE"
+
+            # Insert hook call inside the function body after opening brace
+            sed -i '/^static int do_execveat_common/,/{/ {
+              /^{/a \
+#ifdef CONFIG_KSU\
+\tif (unlikely(ksu_execveat_hook))\
+\t\tksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\
+\telse\
+\t\tksu_handle_execveat_sucompat(\&fd, \&filename, \&argv, \&envp, \&flags);\
+#endif
+            }' "$FILE"
+            echo "    [OK]"
+          fi
+
+          # ─── 2. fs/open.c ───
+          FILE="fs/open.c"
+          echo ">>> Patching $FILE ..."
+          if grep -q "ksu_handle_faccessat" "$FILE"; then
+            echo "    [SKIP] already patched."
+          else
+            if grep -q "^long do_faccessat" "$FILE"; then
+              TARGET="do_faccessat"
+              sed -i '/^long do_faccessat/i \
+#ifdef CONFIG_KSU\
+extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,\
+\t\t\t int *flags);\
+#endif' "$FILE"
+              sed -i '/^long do_faccessat/,/{/ {
+                /^{/a \
+#ifdef CONFIG_KSU\
+\tksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);\
+#endif
+              }' "$FILE"
+            else
+              TARGET="SYSCALL_DEFINE3(faccessat"
+              sed -i '/SYSCALL_DEFINE3(faccessat/i \
+#ifdef CONFIG_KSU\
+extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,\
+\t\t\t int *flags);\
+#endif' "$FILE"
+              sed -i '/SYSCALL_DEFINE3(faccessat/,/unsigned int lookup_flags/ {
+                /unsigned int lookup_flags/a \
+#ifdef CONFIG_KSU\
+\tksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);\
+#endif
+              }' "$FILE"
+            fi
+            echo "    [OK] (target: $TARGET)"
+          fi
+
+          # ─── 3. fs/read_write.c ───
+          FILE="fs/read_write.c"
+          echo ">>> Patching $FILE ..."
+          if grep -q "ksu_handle_vfs_read" "$FILE"; then
+            echo "    [SKIP] already patched."
+          else
+            sed -i '/^ssize_t vfs_read/i \
+#ifdef CONFIG_KSU\
+extern bool ksu_vfs_read_hook __read_mostly;\
+extern int ksu_handle_vfs_read(struct file **file_ptr, char __user **buf_ptr,\
+\t\t\tsize_t *count_ptr, loff_t **pos);\
+#endif' "$FILE"
+
+            sed -i '/^ssize_t vfs_read/,/ssize_t ret;/ {
+              /ssize_t ret;/a \
+#ifdef CONFIG_KSU\
+\tif (unlikely(ksu_vfs_read_hook))\
+\t\tksu_handle_vfs_read(\&file, \&buf, \&count, \&pos);\
+#endif
+            }' "$FILE"
+            echo "    [OK]"
+          fi
+
+          # ─── 4. fs/stat.c ───
+          FILE="fs/stat.c"
+          echo ">>> Patching $FILE ..."
+          if grep -q "ksu_handle_stat" "$FILE"; then
+            echo "    [SKIP] already patched."
+          else
+            if grep -q "int vfs_statx" "$FILE"; then
+              FUNC="vfs_statx"
+              sed -i '/^int vfs_statx/i \
+#ifdef CONFIG_KSU\
+extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\
+#endif' "$FILE"
+              sed -i '/^int vfs_statx/,/unsigned int lookup_flags/ {
+                /unsigned int lookup_flags/a \
+#ifdef CONFIG_KSU\
+\tksu_handle_stat(\&dfd, \&filename, \&flags);\
+#endif
+              }' "$FILE"
+            else
+              FUNC="vfs_fstatat"
+              sed -i '/^int vfs_fstatat/i \
+#ifdef CONFIG_KSU\
+extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\
+#endif' "$FILE"
+              sed -i '/^int vfs_fstatat/,/unsigned int lookup_flags/ {
+                /unsigned int lookup_flags/a \
+#ifdef CONFIG_KSU\
+\tksu_handle_stat(\&dfd, \&filename, \&flag);\
+#endif
+              }' "$FILE"
+            fi
+            echo "    [OK] (function: $FUNC)"
+          fi
+
+          # ─── 5. drivers/input/input.c ───
+          FILE="drivers/input/input.c"
+          echo ">>> Patching $FILE ..."
+          if grep -q "ksu_handle_input_handle_event" "$FILE"; then
+            echo "    [SKIP] already patched."
+          else
+            sed -i '/^static void input_handle_event/i \
+#ifdef CONFIG_KSU\
+extern bool ksu_input_hook __read_mostly;\
+extern int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value);\
+#endif' "$FILE"
+            sed -i '/^static void input_handle_event/,/int disposition/ {
+              /int disposition.*=.*input_get_disposition/a \
+#ifdef CONFIG_KSU\
+\tif (unlikely(ksu_input_hook))\
+\t\tksu_handle_input_handle_event(\&type, \&code, \&value);\
+#endif
+            }' "$FILE"
+            echo "    [OK]"
+          fi
+
+          # ─── 6. fs/devpts/inode.c ───
+          FILE="fs/devpts/inode.c"
+          echo ">>> Patching $FILE ..."
+          if grep -q "ksu_handle_devpts" "$FILE"; then
+            echo "    [SKIP] already patched."
+          else
+            sed -i '/^void \*devpts_get_priv/i \
+#ifdef CONFIG_KSU\
+extern int ksu_handle_devpts(struct inode*);\
+#endif' "$FILE"
+            sed -i '/^void \*devpts_get_priv/,/{/ {
+              /^{/a \
+#ifdef CONFIG_KSU\
+\tksu_handle_devpts(dentry->d_inode);\
+#endif
+            }' "$FILE"
+            echo "    [OK]"
+          fi
+
+          echo "============================================"
+          echo ">>> All manual hook patches applied."
+          echo "============================================"
+
+      # ── update defconfig ──
+      - name: Update defconfig
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          DEFCONFIG_PATH="arch/arm64/configs/${{ github.event.inputs.DEFCONFIG }}"
+          echo ">>> Updating defconfig: $DEFCONFIG_PATH"
+
+          # Remove conflicting entries first
+          sed -i '/CONFIG_KSU/d' "$DEFCONFIG_PATH"
+          sed -i '/CONFIG_KSU_MANUAL_HOOK/d' "$DEFCONFIG_PATH"
+          sed -i '/CONFIG_KPROBES/d' "$DEFCONFIG_PATH"
+          sed -i '/CONFIG_KPM/d' "$DEFCONFIG_PATH"
+          sed -i '/CONFIG_KALLSYMS_ALL/d' "$DEFCONFIG_PATH"
+
+          # Append required configs
+          {
+            echo ""
+            echo "# --- SukiSU-Ultra ---"
+            echo "CONFIG_KSU=y"
+            echo "CONFIG_KSU_MANUAL_HOOK=y"
+            echo "# CONFIG_KPROBES is not set"
+            echo "CONFIG_KALLSYMS=y"
+            echo "CONFIG_KALLSYMS_ALL=y"
+          } >> "$DEFCONFIG_PATH"
+
+          # Optionally enable KPM
+          if [ "${{ github.event.inputs.ENABLE_KPM }}" = "true" ]; then
+            echo "CONFIG_KPM=y" >> "$DEFCONFIG_PATH"
+            echo ">>> KPM enabled."
+          fi
+
+          echo ">>> Defconfig updated."
+          echo "--- Tail of defconfig ---"
+          tail -15 "$DEFCONFIG_PATH"
+
+      # ── build kernel via kernel source's own build.sh ──
+      - name: Build kernel via build.sh
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          echo "============================================"
+          echo ">>> Building kernel via kernel source build.sh"
+          echo "============================================"
+
+          chmod +x build.sh
+
+          # Export environment variables that kernel build.sh typically uses
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CLANG_PATH="$GITHUB_WORKSPACE/toolchain/clang/bin"
+          export PATH="$CLANG_PATH:$PATH"
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CC=clang
+          export LLVM=1
+          export LLVM_IAS=1
+          export DEFCONFIG="${{ github.event.inputs.DEFCONFIG }}"
+
+          # Some kernel build.sh use these variable names
+          export KERNEL_DEFCONFIG="${{ github.event.inputs.DEFCONFIG }}"
+          export TOOLCHAIN="$GITHUB_WORKSPACE/toolchain/clang"
+          export CLANG_DIR="$GITHUB_WORKSPACE/toolchain/clang"
+          export TC_DIR="$GITHUB_WORKSPACE/toolchain/clang"
+
+          echo ">>> ARCH=$ARCH"
+          echo ">>> CLANG_PATH=$CLANG_PATH"
+          echo ">>> DEFCONFIG=$DEFCONFIG"
+          echo ">>> KERNEL_DEFCONFIG=$KERNEL_DEFCONFIG"
+          echo ">>> Extra build args: ${{ github.event.inputs.BUILD_ARGS }}"
+          echo ""
+
+          BUILD_START=$(date +%s)
+
+          # Run the kernel source's build.sh with optional extra args
+          bash build.sh ${{ github.event.inputs.BUILD_ARGS }} 2>&1 | tee $GITHUB_WORKSPACE/build.log
+          BUILD_RC=${PIPESTATUS[0]}
+
+          BUILD_END=$(date +%s)
+          BUILD_ELAPSED=$(( BUILD_END - BUILD_START ))
+          BUILD_MIN=$(( BUILD_ELAPSED / 60 ))
+          BUILD_SEC=$(( BUILD_ELAPSED % 60 ))
+
+          echo ""
+          echo ">>> Build completed in ${BUILD_MIN}m ${BUILD_SEC}s (exit code: $BUILD_RC)"
+
+          if [ $BUILD_RC -ne 0 ]; then
+            echo "::error::Kernel build FAILED! Check build.log for details."
+            exit $BUILD_RC
+          fi
+        env:
+          KERNEL_DIR: ${{ env.KERNEL_DIR }}
+
+      # ── locate kernel output image ──
+      - name: Locate kernel image
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          echo ">>> Searching for kernel image..."
+
+          # build.sh may output to out/, or directly in arch/arm64/boot/
+          KERNEL_IMAGE=""
+          for search_dir in "out/arch/arm64/boot" "arch/arm64/boot" "out/dist"; do
+            for img in Image Image.gz Image.gz-dtb; do
+              if [ -f "$search_dir/$img" ]; then
+                KERNEL_IMAGE="$(realpath "$search_dir/$img")"
+                break 2
+              fi
+            done
+          done
+
+          if [ -z "$KERNEL_IMAGE" ]; then
+            echo "::error::No kernel image found! Searching entire tree..."
+            find . -name "Image*" -type f 2>/dev/null | head -10
+            exit 1
+          fi
+
+          IMG_SIZE=$(du -h "$KERNEL_IMAGE" | cut -f1)
+          echo ">>> ✅ Kernel image: $KERNEL_IMAGE ($IMG_SIZE)"
+          echo "KERNEL_IMAGE=$KERNEL_IMAGE" >> $GITHUB_ENV
+
+          # Find output base directory
+          OUT_BASE="$(dirname "$(dirname "$(dirname "$KERNEL_IMAGE")")")"
+          echo "OUT_BASE=$OUT_BASE" >> $GITHUB_ENV
+
+      # ── package with AnyKernel3 ──
+      - name: Package with AnyKernel3
+        run: |
+          echo ">>> Cloning AnyKernel3..."
+          git clone --depth=1 "${{ github.event.inputs.ANYKERNEL_REPO }}" $GITHUB_WORKSPACE/AnyKernel3
+
+          # Overwrite anykernel.sh with our device-specific config
+          cp $GITHUB_WORKSPACE/anykernel.sh $GITHUB_WORKSPACE/AnyKernel3/anykernel.sh
+
+          # Copy kernel image
+          cp "$KERNEL_IMAGE" $GITHUB_WORKSPACE/AnyKernel3/
+          echo ">>> Copied: $(basename "$KERNEL_IMAGE")"
+
+          # Copy DTBs if available
+          DTB_COUNT=0
+          for dts_dir in "$OUT_BASE/arch/arm64/boot/dts" "$KERNEL_DIR/out/arch/arm64/boot/dts"; do
+            if [ -d "$dts_dir" ]; then
+              find "$dts_dir" -name "*.dtb" -exec cp {} $GITHUB_WORKSPACE/AnyKernel3/ \; 2>/dev/null
+              DTB_COUNT=$(find "$dts_dir" -name "*.dtb" 2>/dev/null | wc -l)
+              break
+            fi
+          done
+          echo ">>> DTBs copied: $DTB_COUNT"
+
+          # Copy DTBO if available
+          for dtbo_path in "$OUT_BASE/arch/arm64/boot/dtbo.img" "$KERNEL_DIR/out/arch/arm64/boot/dtbo.img"; do
+            if [ -f "$dtbo_path" ]; then
+              cp "$dtbo_path" $GITHUB_WORKSPACE/AnyKernel3/
+              echo ">>> Copied: dtbo.img"
+              break
+            fi
+          done
+
+          # Clean unneeded files
+          cd $GITHUB_WORKSPACE/AnyKernel3
+          rm -rf .git .github LICENSE README.md
+
+          # Create flashable zip
+          ZIPNAME="SukiSU-Ultra-lisa-$(date +%Y%m%d-%H%M)-AnyKernel3.zip"
+          zip -r9 "$GITHUB_WORKSPACE/$ZIPNAME" . -x '*.git*'
+          echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
+          echo ">>> ✅ Flashable zip: $ZIPNAME"
+        env:
+          KERNEL_DIR: ${{ env.KERNEL_DIR }}
+          KERNEL_IMAGE: ${{ env.KERNEL_IMAGE }}
+          OUT_BASE: ${{ env.OUT_BASE }}
+
+      # ── upload build artifacts ──
+      - name: Upload AnyKernel3 zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIPNAME }}
+          path: ${{ github.workspace }}/${{ env.ZIPNAME }}
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ${{ github.workspace }}/build.log
