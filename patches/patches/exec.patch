@@ -1,2 +1,0 @@
-# Hook do_execveat_common() — insert before return statement
-# See apply_hooks.sh and workflow for actual implementation.

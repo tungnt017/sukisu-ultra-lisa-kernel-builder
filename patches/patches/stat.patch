@@ -1,2 +1,0 @@
-# Hook vfs_statx()/vfs_fstatat() — before first if()
-# See apply_hooks.sh and workflow for actual implementation.

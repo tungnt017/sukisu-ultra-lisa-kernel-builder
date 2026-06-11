@@ -1,2 +1,0 @@
-# Hook do_faccessat() — C99 safe, before if(mode & ~S_IRWXO)
-# See apply_hooks.sh and workflow for actual implementation.
