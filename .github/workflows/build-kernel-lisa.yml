@@ -42,11 +42,11 @@ on:
         default: true
         type: boolean
       SUSFS_REPO:
-        description: "SUSFS repo (ShirkNeko fork for SukiSU-Ultra)"
+        description: "SUSFS repo"
         required: false
         default: "https://github.com/ShirkNeko/susfs4ksu"
       SUSFS_BRANCH:
-        description: "SUSFS branch (kernel-5.4 for non-GKI 5.4)"
+        description: "SUSFS branch"
         required: false
         default: "kernel-5.4"
       ANYKERNEL_REPO:
@@ -80,7 +80,6 @@ jobs:
           tar -xf clang.tar.gz -C $GITHUB_WORKSPACE/toolchain/clang --strip-components=1
           rm -f clang.tar.gz
           echo "$GITHUB_WORKSPACE/toolchain/clang/bin" >> $GITHUB_PATH
-          $GITHUB_WORKSPACE/toolchain/clang/bin/clang --version || true
 
       - name: Clone kernel source
         run: |
@@ -96,113 +95,58 @@ jobs:
         run: |
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" \
             | bash -s "${{ github.event.inputs.SUKISU_BRANCH }}"
+          if [ -d "drivers/kernelsu" ]; then echo "KSU_DIR=drivers/kernelsu" >> $GITHUB_ENV
+          elif [ -d "KernelSU/kernel" ]; then echo "KSU_DIR=KernelSU/kernel" >> $GITHUB_ENV
+          else echo "KSU_DIR=" >> $GITHUB_ENV; fi
 
-          if [ -d "drivers/kernelsu" ]; then
-            echo "KSU_DIR=drivers/kernelsu" >> $GITHUB_ENV
-          elif [ -d "KernelSU/kernel" ]; then
-            echo "KSU_DIR=KernelSU/kernel" >> $GITHUB_ENV
-          else
-            echo "KSU_DIR=" >> $GITHUB_ENV
-          fi
-
-      # ════════════════════════════════════════════
-      # SUSFS Integration + API Compat Auto-Fix
-      # ════════════════════════════════════════════
       - name: Integrate SUSFS
         if: ${{ github.event.inputs.ENABLE_SUSFS == 'true' }}
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          echo "============================================"
-          echo ">>> Integrating SUSFS"
-          echo ">>> Repo:   ${{ github.event.inputs.SUSFS_REPO }}"
-          echo ">>> Branch: ${{ github.event.inputs.SUSFS_BRANCH }}"
-          echo "============================================"
-
-          # 1. Clone susfs4ksu
+          echo ">>> Cloning SUSFS (${{ github.event.inputs.SUSFS_BRANCH }})..."
           git clone --depth=1 -b "${{ github.event.inputs.SUSFS_BRANCH }}" \
-            "${{ github.event.inputs.SUSFS_REPO }}" \
-            $GITHUB_WORKSPACE/susfs4ksu
+            "${{ github.event.inputs.SUSFS_REPO }}" $GITHUB_WORKSPACE/susfs4ksu
           SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
 
-          # 2. Copy ALL SUSFS source files
-          echo ">>> Copying SUSFS source files..."
-          if [ -d "$SUSFS_DIR/kernel_patches/fs" ]; then
-            cp -rv "$SUSFS_DIR/kernel_patches/fs/"* fs/
-            echo "    ✅ fs/ files copied"
-          fi
-          if [ -d "$SUSFS_DIR/kernel_patches/include" ]; then
-            cp -rv "$SUSFS_DIR/kernel_patches/include/"* include/
-            echo "    ✅ include/ files copied"
-          fi
+          echo ">>> Copying files..."
+          [ -d "$SUSFS_DIR/kernel_patches/fs" ] && cp -rv "$SUSFS_DIR/kernel_patches/fs/"* fs/
+          [ -d "$SUSFS_DIR/kernel_patches/include" ] && cp -rv "$SUSFS_DIR/kernel_patches/include/"* include/
+          ls -la include/linux/susfs* 2>/dev/null || echo "⚠️ No susfs headers"
 
-          # Verify
-          echo ">>> SUSFS headers:"
-          ls -la include/linux/susfs* 2>/dev/null || echo "    ⚠️ No susfs headers"
-
-          # 3. Apply KSU SUSFS patch
-          echo ""
-          echo ">>> Applying KSU SUSFS patches..."
+          echo ">>> Applying KSU patch..."
           KSU_PATCH_DIR="$SUSFS_DIR/kernel_patches/KernelSU"
           [ ! -d "$KSU_PATCH_DIR" ] && KSU_PATCH_DIR="$SUSFS_DIR/kernel_patches"
-
-          KSU_APPLIED=false
-          for patch_file in \
-            "$KSU_PATCH_DIR/10_enable_susfs_for_ksu.patch" \
-            "$KSU_PATCH_DIR/"*enable_susfs*.patch; do
-            [ -f "$patch_file" ] || continue
-            echo "    >>> Trying: $(basename $patch_file)"
-            if [ -n "${{ env.KSU_DIR }}" ]; then
-              if git apply --check --directory="${{ env.KSU_DIR }}" "$patch_file" 2>/dev/null; then
-                git apply --directory="${{ env.KSU_DIR }}" "$patch_file"
-                echo "    ✅ Applied to ${{ env.KSU_DIR }}"; KSU_APPLIED=true; break
-              fi
-              if git apply --check "$patch_file" 2>/dev/null; then
-                git apply "$patch_file"
-                echo "    ✅ Applied (full path)"; KSU_APPLIED=true; break
-              fi
-              echo "    ⚠️ Trying --reject..."
-              git apply --reject "$patch_file" 2>/dev/null || true
-              KSU_APPLIED=true; break
-            fi
-          done
-          [ "$KSU_APPLIED" = false ] && echo "    ⚠️ No KSU patch applied (may be built-in)"
-
-          # 4. Apply kernel SUSFS patch
-          echo ""
-          echo ">>> Applying kernel SUSFS patches..."
-          for patch_file in \
-            "$SUSFS_DIR/kernel_patches/50_add_susfs_in_kernel-5.4.patch" \
-            "$SUSFS_DIR/kernel_patches/"*add_susfs*.patch \
-            "$SUSFS_DIR/kernel_patches/"*kernel*.patch; do
-            [ -f "$patch_file" ] || continue
-            echo "$patch_file" | grep -qiE "ksu|enable_susfs_for_ksu" && continue
-            echo "    >>> Trying: $(basename $patch_file)"
-            if git apply --check "$patch_file" 2>/dev/null; then
-              git apply "$patch_file"
-              echo "    ✅ Applied"
-            else
-              echo "    ⚠️ Trying --reject..."
-              git apply --reject "$patch_file" 2>/dev/null || true
-            fi
+          for p in "$KSU_PATCH_DIR/"*enable_susfs*.patch; do
+            [ -f "$p" ] || continue
+            echo "    Trying: $(basename $p)"
+            git apply --check "$p" 2>/dev/null && git apply "$p" && echo "    ✅ Applied" && break
+            git apply --check --directory="${{ env.KSU_DIR }}" "$p" 2>/dev/null && \
+              git apply --directory="${{ env.KSU_DIR }}" "$p" && echo "    ✅ Applied to KSU" && break
+            git apply --reject "$p" 2>/dev/null || true; break
           done
 
-          # 5. Verify
-          echo ""
+          echo ">>> Applying kernel patch..."
+          for p in "$SUSFS_DIR/kernel_patches/"*add_susfs*.patch "$SUSFS_DIR/kernel_patches/"*kernel*.patch; do
+            [ -f "$p" ] || continue
+            echo "$p" | grep -qiE "ksu|enable_susfs_for_ksu" && continue
+            echo "    Trying: $(basename $p)"
+            git apply --check "$p" 2>/dev/null && git apply "$p" && echo "    ✅ Applied" || \
+              { git apply --reject "$p" 2>/dev/null || true; }
+          done
+
           echo ">>> Verification:"
           [ -f "include/linux/susfs.h" ] && echo "    ✅ susfs.h" || echo "    ❌ susfs.h MISSING"
-          [ -f "include/linux/susfs_def.h" ] && echo "    ✅ susfs_def.h" || echo "    ⚠️ susfs_def.h (may not exist)"
           [ -f "fs/susfs.c" ] && echo "    ✅ susfs.c" || echo "    ❌ susfs.c MISSING"
-
           find . -name "*.rej" 2>/dev/null | head -5 | while read f; do echo "    ⚠️ Reject: $f"; done
 
-      - name: SUSFS API Compat Patch
+      - name: SUSFS/KSU Compat Stubs
         if: ${{ github.event.inputs.ENABLE_SUSFS == 'true' }}
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           chmod +x $GITHUB_WORKSPACE/susfs_compat_patch.sh
           bash $GITHUB_WORKSPACE/susfs_compat_patch.sh
 
-      - name: Handle SUSFS header (disabled)
+      - name: Handle SUSFS disabled
         if: ${{ github.event.inputs.ENABLE_SUSFS != 'true' }}
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
@@ -215,84 +159,44 @@ jobs:
           chmod +x $GITHUB_WORKSPACE/apply_hooks.sh
           bash $GITHUB_WORKSPACE/apply_hooks.sh
 
-      # ════════════════════════════════════════════
-      # Fix ALL vendor code build errors
-      # ════════════════════════════════════════════
       - name: Fix vendor code build errors
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          set -e
-          echo ">>> Fixing vendor code build errors..."
-
-          # FIX 1: rmnet_ipa.c enum conversion
-          RMNET_IPA="techpack/dataipa/drivers/platform/msm/ipa/ipa_v3/rmnet_ipa.c"
-          if [ -f "$RMNET_IPA" ]; then
-            sed -i 's/q6_ul_flt_rule_ptr->ip = flt_spec_ptr->ip_type;/q6_ul_flt_rule_ptr->ip = (enum ipa_ip_type)flt_spec_ptr->ip_type;/g' "$RMNET_IPA"
-            sed -i 's/q6_ul_flt_rule_ptr->action = flt_spec_ptr->filter_action;/q6_ul_flt_rule_ptr->action = (enum ipa_flt_action)flt_spec_ptr->filter_action;/g' "$RMNET_IPA"
-            echo "    [OK] rmnet_ipa.c enum casts"
-          fi
-
-          # FIX 2: sde_hw_dsc_1_2.c missing return type
-          SDE_DSC="techpack/display/msm/sde/sde_hw_dsc_1_2.c"
-          if [ -f "$SDE_DSC" ]; then
-            sed -i 's/^static inline _dsc_subblk_offset/static inline int _dsc_subblk_offset/g' "$SDE_DSC"
-            echo "    [OK] sde_hw_dsc_1_2.c return type"
-          fi
-
-          # FIX 3: sde_hw_vdc.c missing return type
-          SDE_VDC="techpack/display/msm/sde/sde_hw_vdc.c"
-          if [ -f "$SDE_VDC" ]; then
-            sed -i 's/^static inline _vdc_subblk_offset/static inline int _vdc_subblk_offset/g' "$SDE_VDC"
-            echo "    [OK] sde_hw_vdc.c return type"
-          fi
-
-          # FIX 3b: Catch-all for techpack/display
+          echo ">>> Fixing vendor code..."
+          F="techpack/dataipa/drivers/platform/msm/ipa/ipa_v3/rmnet_ipa.c"
+          [ -f "$F" ] && {
+            sed -i 's/q6_ul_flt_rule_ptr->ip = flt_spec_ptr->ip_type;/q6_ul_flt_rule_ptr->ip = (enum ipa_ip_type)flt_spec_ptr->ip_type;/g' "$F"
+            sed -i 's/q6_ul_flt_rule_ptr->action = flt_spec_ptr->filter_action;/q6_ul_flt_rule_ptr->action = (enum ipa_flt_action)flt_spec_ptr->filter_action;/g' "$F"
+            echo "    [OK] rmnet_ipa.c"
+          }
+          for f in techpack/display/msm/sde/sde_hw_dsc_1_2.c techpack/display/msm/sde/sde_hw_vdc.c; do
+            [ -f "$f" ] && sed -i 's/^static inline _\([a-z]*\)_subblk_offset/static inline int _\1_subblk_offset/g' "$f" && echo "    [OK] $(basename $f)"
+          done
           find techpack/display -name "*.c" -exec grep -l "^static inline _.*_subblk_offset" {} \; 2>/dev/null | while read f; do
             sed -i 's/^static inline _\([a-z]*\)_subblk_offset/static inline int _\1_subblk_offset/g' "$f"
-            echo "    [OK] $(basename $f) return type (catch-all)"
           done
-
-          # FIX 4: tcp_timer.c — suppress Clang warning via Makefile
-          TCP_MAKEFILE="net/ipv4/Makefile"
-          if [ -f "$TCP_MAKEFILE" ]; then
-            if ! grep -q "Wno-single-bit-bitfield-constant-conversion" "$TCP_MAKEFILE"; then
-              echo "" >> "$TCP_MAKEFILE"
-              echo "# Fix: suppress 1-bit signed bitfield truncation warning for Clang" >> "$TCP_MAKEFILE"
-              echo 'CFLAGS_tcp_timer.o += -Wno-single-bit-bitfield-constant-conversion' >> "$TCP_MAKEFILE"
-              echo "    [OK] tcp_timer.c — warning suppressed via Makefile"
-            fi
-          fi
-
-          echo ">>> All vendor fixes applied."
+          TCP_MK="net/ipv4/Makefile"
+          [ -f "$TCP_MK" ] && ! grep -q "Wno-single-bit-bitfield" "$TCP_MK" && {
+            echo -e "\nCFLAGS_tcp_timer.o += -Wno-single-bit-bitfield-constant-conversion" >> "$TCP_MK"
+            echo "    [OK] tcp_timer.c Makefile fix"
+          }
 
       - name: Update defconfig
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          DEFCONFIG_PATH="arch/arm64/configs/${{ github.event.inputs.DEFCONFIG }}"
-          echo ">>> Updating defconfig: $DEFCONFIG_PATH"
-
-          sed -i '/CONFIG_KSU/d' "$DEFCONFIG_PATH"
-          sed -i '/CONFIG_KPROBES/d' "$DEFCONFIG_PATH"
-          sed -i '/CONFIG_KPM/d' "$DEFCONFIG_PATH"
-          sed -i '/CONFIG_KALLSYMS_ALL/d' "$DEFCONFIG_PATH"
-
+          DC="arch/arm64/configs/${{ github.event.inputs.DEFCONFIG }}"
+          sed -i '/CONFIG_KSU/d; /CONFIG_KPROBES/d; /CONFIG_KPM/d; /CONFIG_KALLSYMS_ALL/d' "$DC"
           {
             echo ""
-            echo "# --- SukiSU-Ultra ---"
             echo "CONFIG_KSU=y"
             echo "CONFIG_KSU_MANUAL_HOOK=y"
             echo "# CONFIG_KPROBES is not set"
             echo "CONFIG_KALLSYMS=y"
             echo "CONFIG_KALLSYMS_ALL=y"
-          } >> "$DEFCONFIG_PATH"
-
-          if [ "${{ github.event.inputs.ENABLE_KPM }}" = "true" ]; then
-            echo "CONFIG_KPM=y" >> "$DEFCONFIG_PATH"
-          fi
-
+          } >> "$DC"
+          [ "${{ github.event.inputs.ENABLE_KPM }}" = "true" ] && echo "CONFIG_KPM=y" >> "$DC"
           if [ "${{ github.event.inputs.ENABLE_SUSFS }}" = "true" ]; then
             {
-              echo "# --- SUSFS ---"
               echo "CONFIG_KSU_SUSFS=y"
               echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
               echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
@@ -303,75 +207,55 @@ jobs:
               echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
               echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
               echo "# CONFIG_KSU_SUSFS_SUS_SU is not set"
-            } >> "$DEFCONFIG_PATH"
-            echo ">>> SUSFS enabled."
+            } >> "$DC"
           else
-            echo "# CONFIG_KSU_SUSFS is not set" >> "$DEFCONFIG_PATH"
+            echo "# CONFIG_KSU_SUSFS is not set" >> "$DC"
           fi
-
-          tail -25 "$DEFCONFIG_PATH"
+          tail -20 "$DC"
 
       - name: Build kernel via build.sh
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           chmod +x build.sh
-
-          export ARCH=arm64
-          export SUBARCH=arm64
+          export ARCH=arm64 SUBARCH=arm64
           export CLANG_PATH="$GITHUB_WORKSPACE/toolchain/clang/bin"
           export PATH="$CLANG_PATH:$PATH"
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export CROSS_COMPILE=aarch64-linux-gnu-
-          export CC=clang
-          export LLVM=1
-          export LLVM_IAS=1
+          export CC=clang LLVM=1 LLVM_IAS=1
           export DEFCONFIG="${{ github.event.inputs.DEFCONFIG }}"
           export KERNEL_DEFCONFIG="${{ github.event.inputs.DEFCONFIG }}"
           export TOOLCHAIN="$GITHUB_WORKSPACE/toolchain/clang"
           export CLANG_DIR="$GITHUB_WORKSPACE/toolchain/clang"
           export TC_DIR="$GITHUB_WORKSPACE/toolchain/clang"
-
           BUILD_START=$(date +%s)
           bash build.sh ${{ github.event.inputs.BUILD_ARGS }} 2>&1 | tee $GITHUB_WORKSPACE/build.log
           BUILD_RC=${PIPESTATUS[0]}
-          BUILD_END=$(date +%s)
-          echo ">>> Build time: $(( (BUILD_END-BUILD_START)/60 ))m $(( (BUILD_END-BUILD_START)%60 ))s (exit: $BUILD_RC)"
+          echo ">>> Build: $(( ($(date +%s)-BUILD_START)/60 ))m (exit: $BUILD_RC)"
           [ $BUILD_RC -ne 0 ] && { echo "::error::Build FAILED!"; exit $BUILD_RC; }
 
       - name: Locate kernel image
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          KERNEL_IMAGE=""
           for d in "out/arch/arm64/boot" "arch/arm64/boot" "out/dist"; do
             for img in Image Image.gz Image.gz-dtb; do
-              [ -f "$d/$img" ] && KERNEL_IMAGE="$(realpath "$d/$img")" && break 2
+              [ -f "$d/$img" ] && { echo "KERNEL_IMAGE=$(realpath $d/$img)" >> $GITHUB_ENV; break 2; }
             done
           done
-          [ -z "$KERNEL_IMAGE" ] && { echo "::error::No kernel image!"; find . -name "Image*" -type f 2>/dev/null | head -10; exit 1; }
-          echo ">>> ✅ $KERNEL_IMAGE ($(du -h "$KERNEL_IMAGE" | cut -f1))"
-          echo "KERNEL_IMAGE=$KERNEL_IMAGE" >> $GITHUB_ENV
-          echo "OUT_BASE=$(dirname "$(dirname "$(dirname "$KERNEL_IMAGE")")")" >> $GITHUB_ENV
+          [ -z "${KERNEL_IMAGE:-}" ] && { echo "::error::No kernel image!"; exit 1; }
 
-      - name: Package with AnyKernel3
+      - name: Package AnyKernel3
         run: |
           git clone --depth=1 "${{ github.event.inputs.ANYKERNEL_REPO }}" $GITHUB_WORKSPACE/AnyKernel3
           cp $GITHUB_WORKSPACE/anykernel.sh $GITHUB_WORKSPACE/AnyKernel3/anykernel.sh
           cp "$KERNEL_IMAGE" $GITHUB_WORKSPACE/AnyKernel3/
-          for d in "$OUT_BASE/arch/arm64/boot/dts" "$KERNEL_DIR/out/arch/arm64/boot/dts"; do
-            [ -d "$d" ] && find "$d" -name "*.dtb" -exec cp {} $GITHUB_WORKSPACE/AnyKernel3/ \; 2>/dev/null && break
-          done
-          for f in "$OUT_BASE/arch/arm64/boot/dtbo.img" "$KERNEL_DIR/out/arch/arm64/boot/dtbo.img"; do
-            [ -f "$f" ] && cp "$f" $GITHUB_WORKSPACE/AnyKernel3/ && break
-          done
           cd $GITHUB_WORKSPACE/AnyKernel3; rm -rf .git .github LICENSE README.md
-          SUSFS_TAG=""; [ "${{ github.event.inputs.ENABLE_SUSFS }}" = "true" ] && SUSFS_TAG="-SUSFS"
-          ZIPNAME="SukiSU-Ultra${SUSFS_TAG}-lisa-$(date +%Y%m%d-%H%M)-AnyKernel3.zip"
+          STAG=""; [ "${{ github.event.inputs.ENABLE_SUSFS }}" = "true" ] && STAG="-SUSFS"
+          ZIPNAME="SukiSU-Ultra${STAG}-lisa-$(date +%Y%m%d-%H%M)-AnyKernel3.zip"
           zip -r9 "$GITHUB_WORKSPACE/$ZIPNAME" . -x '*.git*'
           echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
         env:
-          KERNEL_DIR: ${{ env.KERNEL_DIR }}
           KERNEL_IMAGE: ${{ env.KERNEL_IMAGE }}
-          OUT_BASE: ${{ env.OUT_BASE }}
 
       - name: Upload AnyKernel3 zip
         uses: actions/upload-artifact@v4
