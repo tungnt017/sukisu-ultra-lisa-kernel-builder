@@ -96,157 +96,212 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" \
             | bash -s "${{ github.event.inputs.SUKISU_BRANCH }}"
 
-          # Resolve KSU_DIR — follow symlinks to REAL path
+          # Resolve real path (setup.sh creates symlinks)
           if [ -d "drivers/kernelsu" ]; then
             KSU_REAL=$(readlink -f "drivers/kernelsu")
             echo "KSU_DIR=$KSU_REAL" >> $GITHUB_ENV
-            echo ">>> KSU_DIR (resolved): $KSU_REAL"
+            echo ">>> KSU_DIR: $KSU_REAL"
           elif [ -d "KernelSU/kernel" ]; then
             KSU_REAL=$(readlink -f "KernelSU/kernel")
             echo "KSU_DIR=$KSU_REAL" >> $GITHUB_ENV
-            echo ">>> KSU_DIR (resolved): $KSU_REAL"
+            echo ">>> KSU_DIR: $KSU_REAL"
           else
             echo "KSU_DIR=" >> $GITHUB_ENV
-            echo "::warning::KSU directory not found!"
           fi
-
-          # Debug: show what we have
-          echo ">>> drivers/kernelsu:"
-          ls -la drivers/kernelsu 2>/dev/null || echo "  (not found)"
-          echo ">>> KernelSU/kernel:"
-          ls -la KernelSU/kernel 2>/dev/null || echo "  (not found)"
 
       - name: Integrate SUSFS
         if: ${{ github.event.inputs.ENABLE_SUSFS == 'true' }}
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          echo ">>> Cloning SUSFS (${{ github.event.inputs.SUSFS_BRANCH }})..."
           git clone --depth=1 -b "${{ github.event.inputs.SUSFS_BRANCH }}" \
             "${{ github.event.inputs.SUSFS_REPO }}" $GITHUB_WORKSPACE/susfs4ksu
           SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
 
-          echo ">>> Copying files..."
           [ -d "$SUSFS_DIR/kernel_patches/fs" ] && cp -rv "$SUSFS_DIR/kernel_patches/fs/"* fs/
           [ -d "$SUSFS_DIR/kernel_patches/include" ] && cp -rv "$SUSFS_DIR/kernel_patches/include/"* include/
-          ls -la include/linux/susfs* 2>/dev/null || true
 
-          echo ">>> Applying KSU SUSFS patch..."
           KSU_PATCH_DIR="$SUSFS_DIR/kernel_patches/KernelSU"
           [ ! -d "$KSU_PATCH_DIR" ] && KSU_PATCH_DIR="$SUSFS_DIR/kernel_patches"
           for p in "$KSU_PATCH_DIR/"*enable_susfs*.patch; do
             [ -f "$p" ] || continue
-            echo "    Trying: $(basename $p)"
-            git apply --check "$p" 2>/dev/null && git apply "$p" && echo "    ✅ Applied" && break
-            # Also try with --directory using the symlink name
+            git apply --check "$p" 2>/dev/null && git apply "$p" && echo "✅ KSU patch" && break
             git apply --check --directory="drivers/kernelsu" "$p" 2>/dev/null && \
-              git apply --directory="drivers/kernelsu" "$p" && echo "    ✅ Applied (symlink dir)" && break
-            echo "    ⚠️ --reject..."
+              git apply --directory="drivers/kernelsu" "$p" && echo "✅ KSU patch (dir)" && break
             git apply --reject "$p" 2>/dev/null || true; break
           done
 
-          echo ">>> Applying kernel SUSFS patch..."
           for p in "$SUSFS_DIR/kernel_patches/"*add_susfs*.patch "$SUSFS_DIR/kernel_patches/"*kernel*.patch; do
             [ -f "$p" ] || continue
             echo "$p" | grep -qiE "ksu|enable_susfs_for_ksu" && continue
-            echo "    Trying: $(basename $p)"
-            git apply --check "$p" 2>/dev/null && git apply "$p" && echo "    ✅ Applied" || \
-              { echo "    ⚠️ --reject..."; git apply --reject "$p" 2>/dev/null || true; }
+            git apply --check "$p" 2>/dev/null && git apply "$p" && echo "✅ Kernel patch" || \
+              { git apply --reject "$p" 2>/dev/null || true; }
           done
 
-          echo ">>> Verification:"
-          [ -f "include/linux/susfs.h" ] && echo "    ✅ susfs.h" || echo "    ❌ susfs.h"
-          [ -f "fs/susfs.c" ] && echo "    ✅ susfs.c" || echo "    ❌ susfs.c"
+          [ -f "include/linux/susfs.h" ] && echo "✅ susfs.h" || echo "❌ susfs.h"
+          [ -f "fs/susfs.c" ] && echo "✅ susfs.c" || echo "❌ susfs.c"
 
       # ════════════════════════════════════════════════════════════
-      #  PATCH dispatch.c DIRECTLY — uses resolved real path
+      #  MASTER FIX: Prepend compat block to KSU.C
+      #  This covers ALL #include'd files: dispatch.c, adb_root.c,
+      #  sucompat.c, ksud.c, event.c, lsm_hook.c
       # ════════════════════════════════════════════════════════════
-      - name: Patch dispatch.c for SUSFS compat
+      - name: Patch ksu.c + dispatch.c for SUSFS compat
         if: ${{ github.event.inputs.ENABLE_SUSFS == 'true' }}
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           set -e
           echo "============================================"
-          echo "  Patching dispatch.c directly (v11)"
+          echo "  SUSFS Compat Patcher v12"
           echo "============================================"
 
           KSU_DIR="${{ env.KSU_DIR }}"
-          echo ">>> KSU_DIR = $KSU_DIR"
 
-          # Try direct path first, then find -L (follow symlinks)
-          DISPATCH=""
-          for candidate in \
-            "$KSU_DIR/supercall/dispatch.c" \
-            "drivers/kernelsu/supercall/dispatch.c" \
-            "KernelSU/kernel/supercall/dispatch.c"; do
-            if [ -f "$candidate" ]; then
-              DISPATCH="$candidate"
-              break
-            fi
+          # ── Find ksu.c ──
+          KSU_C=""
+          for c in "$KSU_DIR/ksu.c" "drivers/kernelsu/ksu.c" "KernelSU/kernel/ksu.c"; do
+            [ -f "$c" ] && { KSU_C="$c"; break; }
           done
+          [ -z "$KSU_C" ] && KSU_C=$(find -L . -path "*/kernelsu/ksu.c" -type f 2>/dev/null | head -1)
+          [ -f "$KSU_C" ] || { echo "::error::ksu.c not found!"; exit 1; }
+          echo ">>> ksu.c: $KSU_C"
 
-          # Fallback: find -L (follows symlinks)
-          if [ -z "$DISPATCH" ]; then
-            echo ">>> Direct path not found, using find -L..."
-            DISPATCH=$(find -L . -path "*/kernelsu/supercall/dispatch.c" -type f 2>/dev/null | head -1)
-          fi
-          if [ -z "$DISPATCH" ]; then
-            DISPATCH=$(find -L . -name "dispatch.c" -path "*/supercall/*" -type f 2>/dev/null | head -1)
-          fi
+          # ── Find dispatch.c ──
+          DISPATCH=""
+          for c in "$KSU_DIR/supercall/dispatch.c" "drivers/kernelsu/supercall/dispatch.c" "KernelSU/kernel/supercall/dispatch.c"; do
+            [ -f "$c" ] && { DISPATCH="$c"; break; }
+          done
+          [ -z "$DISPATCH" ] && DISPATCH=$(find -L . -path "*/supercall/dispatch.c" -type f 2>/dev/null | head -1)
+          [ -f "$DISPATCH" ] || { echo "::error::dispatch.c not found!"; exit 1; }
+          echo ">>> dispatch.c: $DISPATCH"
 
-          if [ ! -f "$DISPATCH" ]; then
-            echo "::error::dispatch.c not found!"
-            echo ">>> Debug — searching all dispatch.c:"
-            find -L . -name "dispatch.c" 2>/dev/null || true
-            echo ">>> Debug — KSU_DIR contents:"
-            ls -laR "$KSU_DIR" 2>/dev/null | head -30 || true
-            exit 1
-          fi
-
-          echo ">>> Found: $DISPATCH"
-
-          # ── Step 1: Write compat block to a temp file, then prepend ──
-          echo ">>> Writing compat block..."
+          # ═══════════════════════════════════════════
+          # Step 1: Prepend FULL compat block to ksu.c
+          # ═══════════════════════════════════════════
+          echo ">>> Prepending compat block to ksu.c..."
           TMPFILE=$(mktemp)
           cat > "$TMPFILE" << 'COMPAT_EOF'
-          /* === SUSFS COMPAT BLOCK (auto-generated v11) === */
-          
-          #ifndef SUSFS_MAGIC
-          #define SUSFS_MAGIC 0x535553
-          #endif
-          #ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
-          #define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
-          #endif
-          #ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
-          #define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
-          #endif
-          #ifndef CMD_SUSFS_ADD_SUS_MAP
-          #define CMD_SUSFS_ADD_SUS_MAP 0x60030
-          #endif
-          #ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
-          #define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
-          #endif
-          
-          #ifndef __SUSFS_COMPAT_STUBS
-          #define __SUSFS_COMPAT_STUBS
-          static inline int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
-          static inline int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }
-          static inline void susfs_start_sdcard_monitor_fn(void) { }
-          static inline int susfs_add_sus_map(void *a) { return -ENOSYS; }
-          static inline int susfs_set_avc_log_spoofing(void *a) { return 0; }
-          static inline int susfs_enable_log(void *a) { return 0; }
-          #endif
-          
-          /* === END SUSFS COMPAT BLOCK === */
-          COMPAT_EOF
+/* === SUSFS/KSU COMPAT BLOCK (auto-generated v12) === */
+/* Covers: dispatch.c, adb_root.c, sucompat.c, ksud.c, event.c, lsm_hook.c */
 
-          # Prepend: cat tmpfile + original → new file, then move back
-          cat "$TMPFILE" "$DISPATCH" > "${DISPATCH}.new"
-          mv "${DISPATCH}.new" "$DISPATCH"
+#include <linux/types.h>
+#include <linux/string.h>
+#include <linux/errno.h>
+
+/* ── Missing CMD defines for dispatch.c ── */
+#ifndef SUSFS_MAGIC
+#define SUSFS_MAGIC 0x535553
+#endif
+#ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
+#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
+#endif
+#ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
+#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
+#endif
+#ifndef CMD_SUSFS_ADD_SUS_MAP
+#define CMD_SUSFS_ADD_SUS_MAP 0x60030
+#endif
+#ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
+#define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
+#endif
+
+/* ── strncpy_from_user_nofault for event.c ── */
+#ifndef strncpy_from_user_nofault
+#define strncpy_from_user_nofault __strncpy_from_user_nofault
+#endif
+
+/* ── Missing function stubs ── */
+#ifndef __SUSFS_KSU_COMPAT_STUBS
+#define __SUSFS_KSU_COMPAT_STUBS
+
+/* dispatch.c stubs */
+static inline int __maybe_unused _compat_susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
+static inline int __maybe_unused _compat_susfs_set_hide_sus_mnts(void *a) { return 0; }
+static inline void __maybe_unused _compat_susfs_start_sdcard_monitor_fn(void) { }
+static inline int __maybe_unused _compat_susfs_add_sus_map(void *a) { return -ENOSYS; }
+static inline int __maybe_unused _compat_susfs_set_avc_log_spoofing(void *a) { return 0; }
+static inline int __maybe_unused _compat_susfs_enable_log(void *a) { return 0; }
+static inline int __maybe_unused _compat_susfs_show_variant(void *a) { return 0; }
+static inline int __maybe_unused _compat_susfs_show_version(void *a) { return 0; }
+
+/* adb_root.c stubs */
+static inline bool __maybe_unused _compat_susfs_starts_with(const char *s, const char *p) {
+    return s && p && strncmp(s, p, strlen(p)) == 0;
+}
+static inline bool __maybe_unused _compat_susfs_ends_with(const char *s, const char *x) {
+    size_t sl, xl;
+    if (!s || !x) return false;
+    sl = strlen(s); xl = strlen(x);
+    return xl <= sl && strcmp(s + sl - xl, x) == 0;
+}
+
+/* sucompat.c + lsm_hook.c stubs */
+static inline bool __maybe_unused _compat_susfs_is_current_proc_umounted(void) { return false; }
+static inline void __maybe_unused _compat_susfs_set_current_proc_umounted(void) { }
+
+/* ksud.c stubs */
+static inline void __maybe_unused _compat_ksu_selinux_hide_handle_post_fs_data(void) { }
+static inline void __maybe_unused _compat_ksu_selinux_hide_handle_second_stage(void) { }
+
+/* Map names — only define if not already provided by real SUSFS */
+#define SUSFS_COMPAT_DEFINE_WEAK(ret, name, args, body) \
+    __attribute__((weak)) ret name args body
+
+#endif /* __SUSFS_KSU_COMPAT_STUBS */
+
+/* === END COMPAT BLOCK === */
+
+COMPAT_EOF
+
+          cat "$TMPFILE" "$KSU_C" > "${KSU_C}.new"
+          mv "${KSU_C}.new" "$KSU_C"
           rm -f "$TMPFILE"
-          echo "    ✅ Compat block prepended to dispatch.c"
+          echo "    ✅ Compat block prepended to ksu.c"
 
-          # ── Step 2: Fix void* → typed pointer casts ──
-          echo ">>> Fixing pointer casts..."
+          # ═══════════════════════════════════════════
+          # Step 2: Add real function stubs AFTER the
+          # compat block but BEFORE the #includes
+          # We use sed to insert just before the first
+          # #include "supercall/dispatch.c" line
+          # ═══════════════════════════════════════════
+          echo ">>> Adding function definitions before #includes..."
+
+          # Find the line number of first #include in the ORIGINAL code
+          # (after our compat block). Look for the first #include "
+          FIRST_LOCAL_INCLUDE=$(grep -n '#include "' "$KSU_C" | head -1 | cut -d: -f1)
+          if [ -n "$FIRST_LOCAL_INCLUDE" ]; then
+            STUBS_BLOCK='/* Weak function definitions for missing SUSFS symbols */\n\
+#ifdef CONFIG_KSU_SUSFS\n\
+__attribute__((weak)) int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }\n\
+__attribute__((weak)) int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }\n\
+__attribute__((weak)) void susfs_start_sdcard_monitor_fn(void) { }\n\
+__attribute__((weak)) int susfs_add_sus_map(void *a) { return -ENOSYS; }\n\
+__attribute__((weak)) int susfs_set_avc_log_spoofing(void *a) { return 0; }\n\
+__attribute__((weak)) int susfs_enable_log(void *a) { return 0; }\n\
+__attribute__((weak)) int susfs_show_variant(void *a) { return 0; }\n\
+__attribute__((weak)) int susfs_show_version(void *a) { return 0; }\n\
+__attribute__((weak)) bool susfs_starts_with(const char *s, const char *p) {\n\
+    return s && p && strncmp(s, p, strlen(p)) == 0;\n\
+}\n\
+__attribute__((weak)) bool susfs_ends_with(const char *s, const char *x) {\n\
+    size_t sl, xl;\n\
+    if (!s || !x) return false;\n\
+    sl = strlen(s); xl = strlen(x);\n\
+    return xl <= sl && strcmp(s + sl - xl, x) == 0;\n\
+}\n\
+__attribute__((weak)) bool susfs_is_current_proc_umounted(void) { return false; }\n\
+__attribute__((weak)) void susfs_set_current_proc_umounted(void) { }\n\
+#endif\n\
+__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }\n\
+__attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }'
+
+            sed -i "${FIRST_LOCAL_INCLUDE}i\\${STUBS_BLOCK}" "$KSU_C"
+            echo "    ✅ Function stubs inserted before #includes"
+          fi
+
+          # ═══════════════════════════════════════════
+          # Step 3: Fix dispatch.c pointer casts
+          # ═══════════════════════════════════════════
+          echo ">>> Fixing dispatch.c pointer casts..."
           sed -i 's/susfs_add_sus_path(arg)/susfs_add_sus_path((struct st_susfs_sus_path __user *)arg)/g' "$DISPATCH"
           sed -i 's/susfs_add_sus_kstat(arg)/susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)arg)/g' "$DISPATCH"
           sed -i 's/susfs_update_sus_kstat(arg)/susfs_update_sus_kstat((struct st_susfs_sus_kstat __user *)arg)/g' "$DISPATCH"
@@ -254,96 +309,18 @@ jobs:
           sed -i 's/susfs_set_uname(arg)/susfs_set_uname((struct st_susfs_uname __user *)arg)/g' "$DISPATCH"
           sed -i 's/susfs_add_open_redirect(arg)/susfs_add_open_redirect((struct st_susfs_open_redirect __user *)arg)/g' "$DISPATCH"
           sed -i 's/susfs_set_cmdline_or_bootconfig(arg)/susfs_set_cmdline_or_bootconfig((char __user *)arg)/g' "$DISPATCH"
-
-          # ── Step 3: Fix susfs_get_enabled_features 1→2 args ──
           sed -i 's/susfs_get_enabled_features(arg)/susfs_get_enabled_features((char __user *)arg, 4096)/g' "$DISPATCH"
+          echo "    ✅ dispatch.c casts fixed"
 
-          echo "    ✅ All casts and arg counts fixed"
-
-          # ── Step 4: Verify ──
+          # ═══════════════════════════════════════════
+          # Step 4: Verify
+          # ═══════════════════════════════════════════
           echo ""
-          echo ">>> First 35 lines of dispatch.c:"
-          head -35 "$DISPATCH"
+          echo ">>> ksu.c first 60 lines:"
+          head -60 "$KSU_C"
           echo ""
-          echo ">>> Key symbols:"
-          grep -n "SUSFS_MAGIC\|CMD_SUSFS_ADD_SUS_PATH_LOOP\|susfs_add_sus_path(\|susfs_get_enabled_features(" "$DISPATCH" | head -20
-          echo ""
-
-      # ════════════════════════════════════════════════════════════
-      #  Fix other KSU compat (strncpy, selinux, susfs utils)
-      # ════════════════════════════════════════════════════════════
-      - name: Fix KSU kernel compat
-        if: ${{ github.event.inputs.ENABLE_SUSFS == 'true' }}
-        working-directory: ${{ env.KERNEL_DIR }}
-        run: |
-          set -e
-          KSU_DIR="${{ env.KSU_DIR }}"
-
-          # Fix strncpy_from_user_nofault
-          COMPAT_KH=""
-          for candidate in \
-            "$KSU_DIR/kernel_compat.h" \
-            "drivers/kernelsu/kernel_compat.h" \
-            "KernelSU/kernel/kernel_compat.h"; do
-            [ -f "$candidate" ] && { COMPAT_KH="$candidate"; break; }
-          done
-          [ -z "$COMPAT_KH" ] && COMPAT_KH=$(find -L . -path "*/kernelsu/kernel_compat.h" -type f 2>/dev/null | head -1)
-
-          if [ -f "$COMPAT_KH" ]; then
-            if ! grep -q "^#define strncpy_from_user_nofault" "$COMPAT_KH"; then
-              echo "" >> "$COMPAT_KH"
-              echo "#ifndef strncpy_from_user_nofault" >> "$COMPAT_KH"
-              echo "#define strncpy_from_user_nofault __strncpy_from_user_nofault" >> "$COMPAT_KH"
-              echo "#endif" >> "$COMPAT_KH"
-              echo "    ✅ strncpy_from_user_nofault → __strncpy_from_user_nofault"
-            fi
-          else
-            echo "    ⚠️ kernel_compat.h not found"
-          fi
-
-          # Create susfs_stubs.c (for susfs_starts_with, etc. called from separate .c files)
-          STUBS="$KSU_DIR/susfs_stubs.c"
-          if [ ! -f "$STUBS" ]; then
-            cat > "$STUBS" << 'EOF'
-          #include <linux/types.h>
-          #include <linux/string.h>
-          #ifdef CONFIG_KSU_SUSFS
-          bool __attribute__((weak)) susfs_starts_with(const char *s, const char *p) {
-              return s && p && strncmp(s, p, strlen(p)) == 0;
-          }
-          bool __attribute__((weak)) susfs_ends_with(const char *s, const char *x) {
-              size_t sl, xl;
-              if (!s || !x) return false;
-              sl = strlen(s); xl = strlen(x);
-              return xl <= sl && strcmp(s + sl - xl, x) == 0;
-          }
-          bool __attribute__((weak)) susfs_is_current_proc_umounted(void) { return false; }
-          void __attribute__((weak)) susfs_set_current_proc_umounted(void) { }
-          int __attribute__((weak)) susfs_show_variant(void *a) { return 0; }
-          int __attribute__((weak)) susfs_show_version(void *a) { return 0; }
-          #endif
-          EOF
-            echo "    ✅ Created susfs_stubs.c"
-          fi
-
-          # Create selinux_compat.c
-          SELSTUBS="$KSU_DIR/selinux_compat.c"
-          if [ ! -f "$SELSTUBS" ]; then
-            cat > "$SELSTUBS" << 'EOF'
-          #include <linux/types.h>
-          void __attribute__((weak)) ksu_selinux_hide_handle_post_fs_data(void) { }
-          void __attribute__((weak)) ksu_selinux_hide_handle_second_stage(void) { }
-          EOF
-                      echo "    ✅ Created selinux_compat.c"
-                    fi
-
-          # Add both to Makefile
-          KSU_MK="$KSU_DIR/Makefile"
-          if [ -f "$KSU_MK" ]; then
-            grep -q "susfs_stubs" "$KSU_MK" || echo 'obj-$(CONFIG_KSU) += susfs_stubs.o' >> "$KSU_MK"
-            grep -q "selinux_compat" "$KSU_MK" || echo 'obj-$(CONFIG_KSU) += selinux_compat.o' >> "$KSU_MK"
-            echo "    ✅ Stubs added to Makefile"
-          fi
+          echo ">>> dispatch.c key lines:"
+          grep -n "SUSFS_MAGIC\|susfs_add_sus_path(\|susfs_get_enabled" "$DISPATCH" | head -10
 
       - name: Handle SUSFS disabled
         if: ${{ github.event.inputs.ENABLE_SUSFS != 'true' }}
@@ -361,24 +338,20 @@ jobs:
       - name: Fix vendor code build errors
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          echo ">>> Fixing vendor code..."
           F="techpack/dataipa/drivers/platform/msm/ipa/ipa_v3/rmnet_ipa.c"
           [ -f "$F" ] && {
             sed -i 's/q6_ul_flt_rule_ptr->ip = flt_spec_ptr->ip_type;/q6_ul_flt_rule_ptr->ip = (enum ipa_ip_type)flt_spec_ptr->ip_type;/g' "$F"
             sed -i 's/q6_ul_flt_rule_ptr->action = flt_spec_ptr->filter_action;/q6_ul_flt_rule_ptr->action = (enum ipa_flt_action)flt_spec_ptr->filter_action;/g' "$F"
-            echo "    [OK] rmnet_ipa.c"
           }
           for f in techpack/display/msm/sde/sde_hw_dsc_1_2.c techpack/display/msm/sde/sde_hw_vdc.c; do
-            [ -f "$f" ] && sed -i 's/^static inline _\([a-z]*\)_subblk_offset/static inline int _\1_subblk_offset/g' "$f" && echo "    [OK] $(basename $f)"
+            [ -f "$f" ] && sed -i 's/^static inline _\([a-z]*\)_subblk_offset/static inline int _\1_subblk_offset/g' "$f"
           done
           find techpack/display -name "*.c" -exec grep -l "^static inline _.*_subblk_offset" {} \; 2>/dev/null | while read f; do
             sed -i 's/^static inline _\([a-z]*\)_subblk_offset/static inline int _\1_subblk_offset/g' "$f"
           done
           TCP_MK="net/ipv4/Makefile"
-          [ -f "$TCP_MK" ] && ! grep -q "Wno-single-bit-bitfield" "$TCP_MK" && {
+          [ -f "$TCP_MK" ] && ! grep -q "Wno-single-bit-bitfield" "$TCP_MK" && \
             echo -e "\nCFLAGS_tcp_timer.o += -Wno-single-bit-bitfield-constant-conversion" >> "$TCP_MK"
-            echo "    [OK] tcp_timer.c"
-          }
 
       - name: Update defconfig
         working-directory: ${{ env.KERNEL_DIR }}
