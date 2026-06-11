@@ -1,11 +1,2 @@
---- a/techpack/dataipa/drivers/platform/msm/ipa/ipa_v3/rmnet_ipa.c
-+++ b/techpack/dataipa/drivers/platform/msm/ipa/ipa_v3/rmnet_ipa.c
-@@ Description: Fix enum conversion errors with -Werror
-
- Add explicit casts for enum type mismatches:
-
--  q6_ul_flt_rule_ptr->ip = flt_spec_ptr->ip_type;
-+  q6_ul_flt_rule_ptr->ip = (enum ipa_ip_type)flt_spec_ptr->ip_type;
-
--  q6_ul_flt_rule_ptr->action = flt_spec_ptr->filter_action;
-+  q6_ul_flt_rule_ptr->action = (enum ipa_flt_action)flt_spec_ptr->filter_action;
+# Reference: rmnet_ipa_enum_fix.patch
+# See workflow and apply_hooks.sh

@@ -1,11 +1,6 @@
-# AnyKernel3 Ramdisk Mod Script
-# osm0sis @ xda-developers
-# Customized for Xiaomi 11 Lite NE 5G (lisa)
-
-## AnyKernel setup
-# begin properties
+# AnyKernel3 — Xiaomi 11 Lite NE 5G (lisa)
 properties() { '
-kernel.string=SukiSU-Ultra + SUSFS Kernel for Xiaomi 11 Lite NE 5G (lisa)
+kernel.string=SukiSU-Ultra + SUSFS Kernel for lisa
 do.devicecheck=1
 do.modules=0
 do.systemless=1
@@ -16,21 +11,12 @@ device.name2=lisain
 device.name3=lisalite
 supported.versions=11-15
 supported.patchlevels=
-'; } # end properties
-
-# shell variables
+'; }
 block=/dev/block/bootdevice/by-name/boot;
 is_slot_device=1;
 ramdisk_compression=auto;
 patch_vbmeta_flag=auto;
-
-## AnyKernel methods (DO NOT CHANGE)
 . tools/ak3-core.sh;
-
-## AnyKernel file attributes
 set_perm_recursive 0 0 755 644 $ramdisk/*;
-
-## AnyKernel install
 dump_boot;
 write_boot;
-## end install
