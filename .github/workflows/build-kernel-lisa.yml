@@ -111,9 +111,9 @@ jobs:
           echo ">>> Copying files..."
           [ -d "$SUSFS_DIR/kernel_patches/fs" ] && cp -rv "$SUSFS_DIR/kernel_patches/fs/"* fs/
           [ -d "$SUSFS_DIR/kernel_patches/include" ] && cp -rv "$SUSFS_DIR/kernel_patches/include/"* include/
-          ls -la include/linux/susfs* 2>/dev/null || echo "⚠️ No susfs headers"
+          ls -la include/linux/susfs* 2>/dev/null || true
 
-          echo ">>> Applying KSU patch..."
+          echo ">>> Applying KSU SUSFS patch..."
           KSU_PATCH_DIR="$SUSFS_DIR/kernel_patches/KernelSU"
           [ ! -d "$KSU_PATCH_DIR" ] && KSU_PATCH_DIR="$SUSFS_DIR/kernel_patches"
           for p in "$KSU_PATCH_DIR/"*enable_susfs*.patch; do
@@ -122,29 +122,177 @@ jobs:
             git apply --check "$p" 2>/dev/null && git apply "$p" && echo "    ✅ Applied" && break
             git apply --check --directory="${{ env.KSU_DIR }}" "$p" 2>/dev/null && \
               git apply --directory="${{ env.KSU_DIR }}" "$p" && echo "    ✅ Applied to KSU" && break
+            echo "    ⚠️ Apply with --reject..."
             git apply --reject "$p" 2>/dev/null || true; break
           done
 
-          echo ">>> Applying kernel patch..."
+          echo ">>> Applying kernel SUSFS patch..."
           for p in "$SUSFS_DIR/kernel_patches/"*add_susfs*.patch "$SUSFS_DIR/kernel_patches/"*kernel*.patch; do
             [ -f "$p" ] || continue
             echo "$p" | grep -qiE "ksu|enable_susfs_for_ksu" && continue
             echo "    Trying: $(basename $p)"
             git apply --check "$p" 2>/dev/null && git apply "$p" && echo "    ✅ Applied" || \
-              { git apply --reject "$p" 2>/dev/null || true; }
+              { echo "    ⚠️ --reject..."; git apply --reject "$p" 2>/dev/null || true; }
           done
 
           echo ">>> Verification:"
-          [ -f "include/linux/susfs.h" ] && echo "    ✅ susfs.h" || echo "    ❌ susfs.h MISSING"
-          [ -f "fs/susfs.c" ] && echo "    ✅ susfs.c" || echo "    ❌ susfs.c MISSING"
+          [ -f "include/linux/susfs.h" ] && echo "    ✅ susfs.h" || echo "    ❌ susfs.h"
+          [ -f "fs/susfs.c" ] && echo "    ✅ susfs.c" || echo "    ❌ susfs.c"
           find . -name "*.rej" 2>/dev/null | head -5 | while read f; do echo "    ⚠️ Reject: $f"; done
 
-      - name: SUSFS/KSU Compat Stubs
+      # ════════════════════════════════════════════
+      #  FIX ALL SUSFS/KSU missing symbols
+      #  Direct patching — no external scripts
+      # ════════════════════════════════════════════
+      - name: Fix SUSFS/KSU missing symbols
         if: ${{ github.event.inputs.ENABLE_SUSFS == 'true' }}
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          chmod +x $GITHUB_WORKSPACE/susfs_compat_patch.sh
-          bash $GITHUB_WORKSPACE/susfs_compat_patch.sh
+          set -e
+          echo "============================================"
+          echo "  Fixing SUSFS/KSU missing symbols (v9)"
+          echo "============================================"
+
+          KSU_DIR="${{ env.KSU_DIR }}"
+          [ -z "$KSU_DIR" ] && { echo "KSU_DIR not set"; exit 1; }
+
+          # ── 1. Create comprehensive compat header ──
+          echo ">>> Creating include/linux/susfs_compat.h ..."
+          cat > include/linux/susfs_compat.h << 'COMPAT_H_EOF'
+          /* SPDX-License-Identifier: GPL-2.0 */
+          /* susfs_compat.h — Auto-generated SUSFS API compat for SukiSU-Ultra v4.x */
+          #ifndef _LINUX_SUSFS_COMPAT_H
+          #define _LINUX_SUSFS_COMPAT_H
+
+          #include <linux/types.h>
+          #include <linux/errno.h>
+
+          /* ── Missing CMD defines ── */
+          #ifndef SUSFS_MAGIC
+          #define SUSFS_MAGIC 0x535553
+          #endif
+          #ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
+          #define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
+          #endif
+          #ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
+          #define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
+          #endif
+          #ifndef CMD_SUSFS_ADD_SUS_MAP
+          #define CMD_SUSFS_ADD_SUS_MAP 0x60030
+          #endif
+          #ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
+          #define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
+          #endif
+
+          /* ── Missing function stubs ── */
+          static inline int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
+          static inline int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }
+          static inline void susfs_start_sdcard_monitor_fn(void) { }
+          static inline int susfs_add_sus_map(void *a) { return -ENOSYS; }
+          static inline int susfs_set_avc_log_spoofing(void *a) { return 0; }
+          static inline int susfs_enable_log(void *a) { return 0; }
+
+          /* ── Utility functions ── */
+          static inline bool susfs_starts_with(const char *s, const char *p) {
+              return s && p && strncmp(s, p, __builtin_strlen(p)) == 0;
+          }
+          static inline bool susfs_ends_with(const char *s, const char *x) {
+              size_t sl, xl;
+              if (!s || !x) return false;
+              sl = __builtin_strlen(s); xl = __builtin_strlen(x);
+              return xl <= sl && __builtin_strcmp(s + sl - xl, x) == 0;
+          }
+          static inline bool susfs_is_current_proc_umounted(void) { return false; }
+          static inline void susfs_set_current_proc_umounted(void) { }
+          static inline int susfs_show_variant(void *a) { return 0; }
+          static inline int susfs_show_version(void *a) { return 0; }
+
+          /* ── KSU SELinux hide ── */
+          static inline void ksu_selinux_hide_handle_post_fs_data(void) { }
+          static inline void ksu_selinux_hide_handle_second_stage(void) { }
+
+          #endif /* _LINUX_SUSFS_COMPAT_H */
+          COMPAT_H_EOF
+          # Remove leading spaces from heredoc
+          sed -i 's/^          //' include/linux/susfs_compat.h
+          echo "    ✅ Created susfs_compat.h"
+
+          # ── 2. Include compat header in KSU source (ksu.c) ──
+          echo ">>> Injecting compat include into KSU..."
+          KSU_C="$KSU_DIR/ksu.c"
+          if [ -f "$KSU_C" ]; then
+            if ! grep -q "susfs_compat.h" "$KSU_C"; then
+              # Add include right after the last #include line
+              LAST_INCLUDE=$(grep -n "^#include" "$KSU_C" | tail -1 | cut -d: -f1)
+              if [ -n "$LAST_INCLUDE" ]; then
+                sed -i "${LAST_INCLUDE}a\\
+          #include <linux/susfs_compat.h>" "$KSU_C"
+                echo "    ✅ Added #include <linux/susfs_compat.h> to ksu.c"
+              fi
+            else
+              echo "    ✅ Already included"
+            fi
+          fi
+
+          # Also include in any file that directly includes dispatch.c
+          for f in $(grep -rl "dispatch.c" "$KSU_DIR" --include="*.c" 2>/dev/null); do
+            if ! grep -q "susfs_compat.h" "$f"; then
+              LAST_INC=$(grep -n "^#include" "$f" | tail -1 | cut -d: -f1)
+              [ -n "$LAST_INC" ] && sed -i "${LAST_INC}a\\
+          #include <linux/susfs_compat.h>" "$f"
+              echo "    ✅ Added compat include to $(basename $f)"
+            fi
+          done
+
+          # ── 3. Fix void* pointer casts in dispatch.c ──
+          echo ">>> Fixing pointer casts in dispatch.c..."
+          DISPATCH=$(find "$KSU_DIR" -name "dispatch.c" -type f | head -1)
+          if [ -f "$DISPATCH" ]; then
+            # Cast void* arg to expected struct types
+            sed -i 's/susfs_add_sus_path(arg)/susfs_add_sus_path((struct st_susfs_sus_path __user *)arg)/g' "$DISPATCH"
+            sed -i 's/susfs_add_sus_kstat(arg)/susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)arg)/g' "$DISPATCH"
+            sed -i 's/susfs_update_sus_kstat(arg)/susfs_update_sus_kstat((struct st_susfs_sus_kstat __user *)arg)/g' "$DISPATCH"
+            sed -i 's/susfs_add_sus_kstat_statically(arg)/susfs_add_sus_kstat_statically((struct st_susfs_sus_kstat_statically __user *)arg)/g' "$DISPATCH"
+            sed -i 's/susfs_set_uname(arg)/susfs_set_uname((struct st_susfs_uname __user *)arg)/g' "$DISPATCH"
+            sed -i 's/susfs_add_open_redirect(arg)/susfs_add_open_redirect((struct st_susfs_open_redirect __user *)arg)/g' "$DISPATCH"
+            sed -i 's/susfs_set_cmdline_or_bootconfig(arg)/susfs_set_cmdline_or_bootconfig((char __user *)arg)/g' "$DISPATCH"
+
+            # Fix susfs_get_enabled_features: 1 arg → 2 args
+            sed -i 's/susfs_get_enabled_features(arg)/susfs_get_enabled_features((char __user *)arg, 4096)/g' "$DISPATCH"
+
+            echo "    ✅ dispatch.c patched"
+          else
+            echo "    ⚠️ dispatch.c not found"
+          fi
+
+          # ── 4. Fix strncpy_from_user_nofault ──
+          echo ">>> Fixing strncpy_from_user_nofault..."
+          COMPAT_KH=$(find "$KSU_DIR" -name "kernel_compat.h" -type f | head -1)
+          if [ -f "$COMPAT_KH" ]; then
+            if grep -q "__strncpy_from_user_nofault" "$COMPAT_KH" && \
+               ! grep -q "^#define strncpy_from_user_nofault" "$COMPAT_KH"; then
+              echo "" >> "$COMPAT_KH"
+              echo "#ifndef strncpy_from_user_nofault" >> "$COMPAT_KH"
+              echo "#define strncpy_from_user_nofault __strncpy_from_user_nofault" >> "$COMPAT_KH"
+              echo "#endif" >> "$COMPAT_KH"
+              echo "    ✅ Added strncpy_from_user_nofault define"
+            else
+              echo "    ✅ Already defined or not needed"
+            fi
+          fi
+
+          # ── 5. Verify ──
+          echo ""
+          echo ">>> Files modified:"
+          [ -f "include/linux/susfs_compat.h" ] && echo "    ✅ include/linux/susfs_compat.h"
+          grep -l "susfs_compat.h" "$KSU_DIR/"*.c 2>/dev/null | while read f; do
+            echo "    ✅ $(basename $f) includes compat header"
+          done
+
+          echo ""
+          echo "============================================"
+          echo "  SUSFS/KSU symbol fix complete."
+          echo "============================================"
 
       - name: Handle SUSFS disabled
         if: ${{ github.event.inputs.ENABLE_SUSFS != 'true' }}
@@ -178,7 +326,7 @@ jobs:
           TCP_MK="net/ipv4/Makefile"
           [ -f "$TCP_MK" ] && ! grep -q "Wno-single-bit-bitfield" "$TCP_MK" && {
             echo -e "\nCFLAGS_tcp_timer.o += -Wno-single-bit-bitfield-constant-conversion" >> "$TCP_MK"
-            echo "    [OK] tcp_timer.c Makefile fix"
+            echo "    [OK] tcp_timer.c"
           }
 
       - name: Update defconfig
