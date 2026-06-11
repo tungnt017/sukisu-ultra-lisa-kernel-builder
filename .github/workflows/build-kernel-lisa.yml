@@ -180,77 +180,77 @@ jobs:
           echo ">>> Prepending compat block to ksu.c..."
           TMPFILE=$(mktemp)
           cat > "$TMPFILE" << 'COMPAT_EOF'
-/* === SUSFS/KSU COMPAT BLOCK (auto-generated v12) === */
-/* Covers: dispatch.c, adb_root.c, sucompat.c, ksud.c, event.c, lsm_hook.c */
-
-#include <linux/types.h>
-#include <linux/string.h>
-#include <linux/errno.h>
-
-/* ── Missing CMD defines for dispatch.c ── */
-#ifndef SUSFS_MAGIC
-#define SUSFS_MAGIC 0x535553
-#endif
-#ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
-#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
-#endif
-#ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
-#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
-#endif
-#ifndef CMD_SUSFS_ADD_SUS_MAP
-#define CMD_SUSFS_ADD_SUS_MAP 0x60030
-#endif
-#ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
-#define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
-#endif
-
-/* ── strncpy_from_user_nofault for event.c ── */
-#ifndef strncpy_from_user_nofault
-#define strncpy_from_user_nofault __strncpy_from_user_nofault
-#endif
-
-/* ── Missing function stubs ── */
-#ifndef __SUSFS_KSU_COMPAT_STUBS
-#define __SUSFS_KSU_COMPAT_STUBS
-
-/* dispatch.c stubs */
-static inline int __maybe_unused _compat_susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
-static inline int __maybe_unused _compat_susfs_set_hide_sus_mnts(void *a) { return 0; }
-static inline void __maybe_unused _compat_susfs_start_sdcard_monitor_fn(void) { }
-static inline int __maybe_unused _compat_susfs_add_sus_map(void *a) { return -ENOSYS; }
-static inline int __maybe_unused _compat_susfs_set_avc_log_spoofing(void *a) { return 0; }
-static inline int __maybe_unused _compat_susfs_enable_log(void *a) { return 0; }
-static inline int __maybe_unused _compat_susfs_show_variant(void *a) { return 0; }
-static inline int __maybe_unused _compat_susfs_show_version(void *a) { return 0; }
-
-/* adb_root.c stubs */
-static inline bool __maybe_unused _compat_susfs_starts_with(const char *s, const char *p) {
-    return s && p && strncmp(s, p, strlen(p)) == 0;
-}
-static inline bool __maybe_unused _compat_susfs_ends_with(const char *s, const char *x) {
-    size_t sl, xl;
-    if (!s || !x) return false;
-    sl = strlen(s); xl = strlen(x);
-    return xl <= sl && strcmp(s + sl - xl, x) == 0;
-}
-
-/* sucompat.c + lsm_hook.c stubs */
-static inline bool __maybe_unused _compat_susfs_is_current_proc_umounted(void) { return false; }
-static inline void __maybe_unused _compat_susfs_set_current_proc_umounted(void) { }
-
-/* ksud.c stubs */
-static inline void __maybe_unused _compat_ksu_selinux_hide_handle_post_fs_data(void) { }
-static inline void __maybe_unused _compat_ksu_selinux_hide_handle_second_stage(void) { }
-
-/* Map names — only define if not already provided by real SUSFS */
-#define SUSFS_COMPAT_DEFINE_WEAK(ret, name, args, body) \
-    __attribute__((weak)) ret name args body
-
-#endif /* __SUSFS_KSU_COMPAT_STUBS */
-
-/* === END COMPAT BLOCK === */
-
-COMPAT_EOF
+          /* === SUSFS/KSU COMPAT BLOCK (auto-generated v12) === */
+          /* Covers: dispatch.c, adb_root.c, sucompat.c, ksud.c, event.c, lsm_hook.c */
+          
+          #include <linux/types.h>
+          #include <linux/string.h>
+          #include <linux/errno.h>
+          
+          /* ── Missing CMD defines for dispatch.c ── */
+          #ifndef SUSFS_MAGIC
+          #define SUSFS_MAGIC 0x535553
+          #endif
+          #ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
+          #define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
+          #endif
+          #ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
+          #define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
+          #endif
+          #ifndef CMD_SUSFS_ADD_SUS_MAP
+          #define CMD_SUSFS_ADD_SUS_MAP 0x60030
+          #endif
+          #ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
+          #define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
+          #endif
+          
+          /* ── strncpy_from_user_nofault for event.c ── */
+          #ifndef strncpy_from_user_nofault
+          #define strncpy_from_user_nofault __strncpy_from_user_nofault
+          #endif
+          
+          /* ── Missing function stubs ── */
+          #ifndef __SUSFS_KSU_COMPAT_STUBS
+          #define __SUSFS_KSU_COMPAT_STUBS
+          
+          /* dispatch.c stubs */
+          static inline int __maybe_unused _compat_susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
+          static inline int __maybe_unused _compat_susfs_set_hide_sus_mnts(void *a) { return 0; }
+          static inline void __maybe_unused _compat_susfs_start_sdcard_monitor_fn(void) { }
+          static inline int __maybe_unused _compat_susfs_add_sus_map(void *a) { return -ENOSYS; }
+          static inline int __maybe_unused _compat_susfs_set_avc_log_spoofing(void *a) { return 0; }
+          static inline int __maybe_unused _compat_susfs_enable_log(void *a) { return 0; }
+          static inline int __maybe_unused _compat_susfs_show_variant(void *a) { return 0; }
+          static inline int __maybe_unused _compat_susfs_show_version(void *a) { return 0; }
+          
+          /* adb_root.c stubs */
+          static inline bool __maybe_unused _compat_susfs_starts_with(const char *s, const char *p) {
+              return s && p && strncmp(s, p, strlen(p)) == 0;
+          }
+          static inline bool __maybe_unused _compat_susfs_ends_with(const char *s, const char *x) {
+              size_t sl, xl;
+              if (!s || !x) return false;
+              sl = strlen(s); xl = strlen(x);
+              return xl <= sl && strcmp(s + sl - xl, x) == 0;
+          }
+          
+          /* sucompat.c + lsm_hook.c stubs */
+          static inline bool __maybe_unused _compat_susfs_is_current_proc_umounted(void) { return false; }
+          static inline void __maybe_unused _compat_susfs_set_current_proc_umounted(void) { }
+          
+          /* ksud.c stubs */
+          static inline void __maybe_unused _compat_ksu_selinux_hide_handle_post_fs_data(void) { }
+          static inline void __maybe_unused _compat_ksu_selinux_hide_handle_second_stage(void) { }
+          
+          /* Map names — only define if not already provided by real SUSFS */
+          #define SUSFS_COMPAT_DEFINE_WEAK(ret, name, args, body) \
+              __attribute__((weak)) ret name args body
+          
+          #endif /* __SUSFS_KSU_COMPAT_STUBS */
+          
+          /* === END COMPAT BLOCK === */
+          
+          COMPAT_EOF
 
           cat "$TMPFILE" "$KSU_C" > "${KSU_C}.new"
           mv "${KSU_C}.new" "$KSU_C"
@@ -270,29 +270,29 @@ COMPAT_EOF
           FIRST_LOCAL_INCLUDE=$(grep -n '#include "' "$KSU_C" | head -1 | cut -d: -f1)
           if [ -n "$FIRST_LOCAL_INCLUDE" ]; then
             STUBS_BLOCK='/* Weak function definitions for missing SUSFS symbols */\n\
-#ifdef CONFIG_KSU_SUSFS\n\
-__attribute__((weak)) int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }\n\
-__attribute__((weak)) int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }\n\
-__attribute__((weak)) void susfs_start_sdcard_monitor_fn(void) { }\n\
-__attribute__((weak)) int susfs_add_sus_map(void *a) { return -ENOSYS; }\n\
-__attribute__((weak)) int susfs_set_avc_log_spoofing(void *a) { return 0; }\n\
-__attribute__((weak)) int susfs_enable_log(void *a) { return 0; }\n\
-__attribute__((weak)) int susfs_show_variant(void *a) { return 0; }\n\
-__attribute__((weak)) int susfs_show_version(void *a) { return 0; }\n\
-__attribute__((weak)) bool susfs_starts_with(const char *s, const char *p) {\n\
-    return s && p && strncmp(s, p, strlen(p)) == 0;\n\
-}\n\
-__attribute__((weak)) bool susfs_ends_with(const char *s, const char *x) {\n\
-    size_t sl, xl;\n\
-    if (!s || !x) return false;\n\
-    sl = strlen(s); xl = strlen(x);\n\
-    return xl <= sl && strcmp(s + sl - xl, x) == 0;\n\
-}\n\
-__attribute__((weak)) bool susfs_is_current_proc_umounted(void) { return false; }\n\
-__attribute__((weak)) void susfs_set_current_proc_umounted(void) { }\n\
-#endif\n\
-__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }\n\
-__attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }'
+          #ifdef CONFIG_KSU_SUSFS\n\
+          __attribute__((weak)) int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }\n\
+          __attribute__((weak)) int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }\n\
+          __attribute__((weak)) void susfs_start_sdcard_monitor_fn(void) { }\n\
+          __attribute__((weak)) int susfs_add_sus_map(void *a) { return -ENOSYS; }\n\
+          __attribute__((weak)) int susfs_set_avc_log_spoofing(void *a) { return 0; }\n\
+          __attribute__((weak)) int susfs_enable_log(void *a) { return 0; }\n\
+          __attribute__((weak)) int susfs_show_variant(void *a) { return 0; }\n\
+          __attribute__((weak)) int susfs_show_version(void *a) { return 0; }\n\
+          __attribute__((weak)) bool susfs_starts_with(const char *s, const char *p) {\n\
+              return s && p && strncmp(s, p, strlen(p)) == 0;\n\
+          }\n\
+          __attribute__((weak)) bool susfs_ends_with(const char *s, const char *x) {\n\
+              size_t sl, xl;\n\
+              if (!s || !x) return false;\n\
+              sl = strlen(s); xl = strlen(x);\n\
+              return xl <= sl && strcmp(s + sl - xl, x) == 0;\n\
+          }\n\
+          __attribute__((weak)) bool susfs_is_current_proc_umounted(void) { return false; }\n\
+          __attribute__((weak)) void susfs_set_current_proc_umounted(void) { }\n\
+          #endif\n\
+          __attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }\n\
+          __attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }'
 
             sed -i "${FIRST_LOCAL_INCLUDE}i\\${STUBS_BLOCK}" "$KSU_C"
             echo "    ✅ Function stubs inserted before #includes"
