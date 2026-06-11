@@ -46,9 +46,9 @@ on:
         required: false
         default: "https://github.com/ShirkNeko/susfs4ksu"
       SUSFS_BRANCH:
-        description: "SUSFS branch (gki-android12-5.4 for 5.4 kernels with SukiSU-Ultra)"
+        description: "SUSFS branch (kernel-5.4 for non-GKI 5.4)"
         required: false
-        default: "gki-android12-5.4"
+        default: "kernel-5.4"
       ANYKERNEL_REPO:
         description: "AnyKernel3 repo"
         required: true
@@ -106,7 +106,7 @@ jobs:
           fi
 
       # ════════════════════════════════════════════
-      # SUSFS Integration (with API compatibility check)
+      # SUSFS Integration + API Compat Auto-Fix
       # ════════════════════════════════════════════
       - name: Integrate SUSFS
         if: ${{ github.event.inputs.ENABLE_SUSFS == 'true' }}
@@ -124,7 +124,7 @@ jobs:
             $GITHUB_WORKSPACE/susfs4ksu
           SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
 
-          # 2. Copy ALL SUSFS source files (MUST copy entire include/ tree for susfs_def.h)
+          # 2. Copy ALL SUSFS source files
           echo ">>> Copying SUSFS source files..."
           if [ -d "$SUSFS_DIR/kernel_patches/fs" ]; then
             cp -rv "$SUSFS_DIR/kernel_patches/fs/"* fs/
@@ -132,33 +132,14 @@ jobs:
           fi
           if [ -d "$SUSFS_DIR/kernel_patches/include" ]; then
             cp -rv "$SUSFS_DIR/kernel_patches/include/"* include/
-            echo "    ✅ include/ files copied (including susfs_def.h)"
+            echo "    ✅ include/ files copied"
           fi
 
-          # Verify headers
+          # Verify
           echo ">>> SUSFS headers:"
-          ls -la include/linux/susfs* 2>/dev/null || echo "    ⚠️ No susfs headers found"
+          ls -la include/linux/susfs* 2>/dev/null || echo "    ⚠️ No susfs headers"
 
-          # 3. API compatibility check
-          echo ""
-          echo ">>> API compatibility check..."
-          COMPAT_OK=true
-          for sym in SUSFS_MAGIC susfs_add_sus_path susfs_set_uname; do
-            if grep -rq "$sym" include/linux/susfs*.h fs/susfs.c 2>/dev/null; then
-              echo "    ✅ $sym"
-            else
-              echo "    ⚠️ $sym NOT FOUND — SUSFS branch may not be compatible"
-              COMPAT_OK=false
-            fi
-          done
-
-          if [ "$COMPAT_OK" = false ]; then
-            echo ""
-            echo "    ⚠️ SUSFS API may not match SukiSU-Ultra version."
-            echo "    Try different branches: gki-android12-5.4, kernel-5.4, gki-android14-5.15"
-          fi
-
-          # 4. Apply KSU SUSFS patch
+          # 3. Apply KSU SUSFS patch
           echo ""
           echo ">>> Applying KSU SUSFS patches..."
           KSU_PATCH_DIR="$SUSFS_DIR/kernel_patches/KernelSU"
@@ -170,10 +151,10 @@ jobs:
             "$KSU_PATCH_DIR/"*enable_susfs*.patch; do
             [ -f "$patch_file" ] || continue
             echo "    >>> Trying: $(basename $patch_file)"
-            if [ -n "$KSU_DIR" ]; then
-              if git apply --check --directory="$KSU_DIR" "$patch_file" 2>/dev/null; then
-                git apply --directory="$KSU_DIR" "$patch_file"
-                echo "    ✅ Applied to $KSU_DIR"; KSU_APPLIED=true; break
+            if [ -n "${{ env.KSU_DIR }}" ]; then
+              if git apply --check --directory="${{ env.KSU_DIR }}" "$patch_file" 2>/dev/null; then
+                git apply --directory="${{ env.KSU_DIR }}" "$patch_file"
+                echo "    ✅ Applied to ${{ env.KSU_DIR }}"; KSU_APPLIED=true; break
               fi
               if git apply --check "$patch_file" 2>/dev/null; then
                 git apply "$patch_file"
@@ -186,7 +167,7 @@ jobs:
           done
           [ "$KSU_APPLIED" = false ] && echo "    ⚠️ No KSU patch applied (may be built-in)"
 
-          # 5. Apply kernel SUSFS patch
+          # 4. Apply kernel SUSFS patch
           echo ""
           echo ">>> Applying kernel SUSFS patches..."
           for patch_file in \
@@ -205,14 +186,21 @@ jobs:
             fi
           done
 
-          # 6. Verify
+          # 5. Verify
           echo ""
-          echo ">>> Final verification:"
+          echo ">>> Verification:"
           [ -f "include/linux/susfs.h" ] && echo "    ✅ susfs.h" || echo "    ❌ susfs.h MISSING"
-          [ -f "include/linux/susfs_def.h" ] && echo "    ✅ susfs_def.h" || echo "    ⚠️ susfs_def.h (may not exist in this SUSFS version)"
+          [ -f "include/linux/susfs_def.h" ] && echo "    ✅ susfs_def.h" || echo "    ⚠️ susfs_def.h (may not exist)"
           [ -f "fs/susfs.c" ] && echo "    ✅ susfs.c" || echo "    ❌ susfs.c MISSING"
 
           find . -name "*.rej" 2>/dev/null | head -5 | while read f; do echo "    ⚠️ Reject: $f"; done
+
+      - name: SUSFS API Compat Patch
+        if: ${{ github.event.inputs.ENABLE_SUSFS == 'true' }}
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          chmod +x $GITHUB_WORKSPACE/susfs_compat_patch.sh
+          bash $GITHUB_WORKSPACE/susfs_compat_patch.sh
 
       - name: Handle SUSFS header (disabled)
         if: ${{ github.event.inputs.ENABLE_SUSFS != 'true' }}
@@ -258,14 +246,13 @@ jobs:
             echo "    [OK] sde_hw_vdc.c return type"
           fi
 
-          # FIX 3b: Catch-all for any other sde_hw_*.c files with same pattern
+          # FIX 3b: Catch-all for techpack/display
           find techpack/display -name "*.c" -exec grep -l "^static inline _.*_subblk_offset" {} \; 2>/dev/null | while read f; do
             sed -i 's/^static inline _\([a-z]*\)_subblk_offset/static inline int _\1_subblk_offset/g' "$f"
             echo "    [OK] $(basename $f) return type (catch-all)"
           done
 
-          # FIX 4: tcp_timer.c — suppress -Wsingle-bit-bitfield-constant-conversion
-          # The proper fix: add compiler flag to suppress this warning for tcp_timer.o
+          # FIX 4: tcp_timer.c — suppress Clang warning via Makefile
           TCP_MAKEFILE="net/ipv4/Makefile"
           if [ -f "$TCP_MAKEFILE" ]; then
             if ! grep -q "Wno-single-bit-bitfield-constant-conversion" "$TCP_MAKEFILE"; then
@@ -273,8 +260,6 @@ jobs:
               echo "# Fix: suppress 1-bit signed bitfield truncation warning for Clang" >> "$TCP_MAKEFILE"
               echo 'CFLAGS_tcp_timer.o += -Wno-single-bit-bitfield-constant-conversion' >> "$TCP_MAKEFILE"
               echo "    [OK] tcp_timer.c — warning suppressed via Makefile"
-            else
-              echo "    [SKIP] tcp_timer.c — already has warning suppression"
             fi
           fi
 
