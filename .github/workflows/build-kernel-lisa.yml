@@ -208,36 +208,36 @@ jobs:
           echo ">>> Writing compat block..."
           TMPFILE=$(mktemp)
           cat > "$TMPFILE" << 'COMPAT_EOF'
-/* === SUSFS COMPAT BLOCK (auto-generated v11) === */
-
-#ifndef SUSFS_MAGIC
-#define SUSFS_MAGIC 0x535553
-#endif
-#ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
-#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
-#endif
-#ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
-#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
-#endif
-#ifndef CMD_SUSFS_ADD_SUS_MAP
-#define CMD_SUSFS_ADD_SUS_MAP 0x60030
-#endif
-#ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
-#define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
-#endif
-
-#ifndef __SUSFS_COMPAT_STUBS
-#define __SUSFS_COMPAT_STUBS
-static inline int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
-static inline int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }
-static inline void susfs_start_sdcard_monitor_fn(void) { }
-static inline int susfs_add_sus_map(void *a) { return -ENOSYS; }
-static inline int susfs_set_avc_log_spoofing(void *a) { return 0; }
-static inline int susfs_enable_log(void *a) { return 0; }
-#endif
-
-/* === END SUSFS COMPAT BLOCK === */
-COMPAT_EOF
+          /* === SUSFS COMPAT BLOCK (auto-generated v11) === */
+          
+          #ifndef SUSFS_MAGIC
+          #define SUSFS_MAGIC 0x535553
+          #endif
+          #ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
+          #define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
+          #endif
+          #ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
+          #define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
+          #endif
+          #ifndef CMD_SUSFS_ADD_SUS_MAP
+          #define CMD_SUSFS_ADD_SUS_MAP 0x60030
+          #endif
+          #ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
+          #define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
+          #endif
+          
+          #ifndef __SUSFS_COMPAT_STUBS
+          #define __SUSFS_COMPAT_STUBS
+          static inline int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
+          static inline int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }
+          static inline void susfs_start_sdcard_monitor_fn(void) { }
+          static inline int susfs_add_sus_map(void *a) { return -ENOSYS; }
+          static inline int susfs_set_avc_log_spoofing(void *a) { return 0; }
+          static inline int susfs_enable_log(void *a) { return 0; }
+          #endif
+          
+          /* === END SUSFS COMPAT BLOCK === */
+          COMPAT_EOF
 
           # Prepend: cat tmpfile + original → new file, then move back
           cat "$TMPFILE" "$DISPATCH" > "${DISPATCH}.new"
@@ -305,24 +305,24 @@ COMPAT_EOF
           STUBS="$KSU_DIR/susfs_stubs.c"
           if [ ! -f "$STUBS" ]; then
             cat > "$STUBS" << 'EOF'
-#include <linux/types.h>
-#include <linux/string.h>
-#ifdef CONFIG_KSU_SUSFS
-bool __attribute__((weak)) susfs_starts_with(const char *s, const char *p) {
-    return s && p && strncmp(s, p, strlen(p)) == 0;
-}
-bool __attribute__((weak)) susfs_ends_with(const char *s, const char *x) {
-    size_t sl, xl;
-    if (!s || !x) return false;
-    sl = strlen(s); xl = strlen(x);
-    return xl <= sl && strcmp(s + sl - xl, x) == 0;
-}
-bool __attribute__((weak)) susfs_is_current_proc_umounted(void) { return false; }
-void __attribute__((weak)) susfs_set_current_proc_umounted(void) { }
-int __attribute__((weak)) susfs_show_variant(void *a) { return 0; }
-int __attribute__((weak)) susfs_show_version(void *a) { return 0; }
-#endif
-EOF
+          #include <linux/types.h>
+          #include <linux/string.h>
+          #ifdef CONFIG_KSU_SUSFS
+          bool __attribute__((weak)) susfs_starts_with(const char *s, const char *p) {
+              return s && p && strncmp(s, p, strlen(p)) == 0;
+          }
+          bool __attribute__((weak)) susfs_ends_with(const char *s, const char *x) {
+              size_t sl, xl;
+              if (!s || !x) return false;
+              sl = strlen(s); xl = strlen(x);
+              return xl <= sl && strcmp(s + sl - xl, x) == 0;
+          }
+          bool __attribute__((weak)) susfs_is_current_proc_umounted(void) { return false; }
+          void __attribute__((weak)) susfs_set_current_proc_umounted(void) { }
+          int __attribute__((weak)) susfs_show_variant(void *a) { return 0; }
+          int __attribute__((weak)) susfs_show_version(void *a) { return 0; }
+          #endif
+          EOF
             echo "    ✅ Created susfs_stubs.c"
           fi
 
@@ -330,12 +330,12 @@ EOF
           SELSTUBS="$KSU_DIR/selinux_compat.c"
           if [ ! -f "$SELSTUBS" ]; then
             cat > "$SELSTUBS" << 'EOF'
-#include <linux/types.h>
-void __attribute__((weak)) ksu_selinux_hide_handle_post_fs_data(void) { }
-void __attribute__((weak)) ksu_selinux_hide_handle_second_stage(void) { }
-EOF
-            echo "    ✅ Created selinux_compat.c"
-          fi
+          #include <linux/types.h>
+          void __attribute__((weak)) ksu_selinux_hide_handle_post_fs_data(void) { }
+          void __attribute__((weak)) ksu_selinux_hide_handle_second_stage(void) { }
+          EOF
+                      echo "    ✅ Created selinux_compat.c"
+                    fi
 
           # Add both to Makefile
           KSU_MK="$KSU_DIR/Makefile"
