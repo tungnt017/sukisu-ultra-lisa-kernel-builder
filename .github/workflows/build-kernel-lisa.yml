@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       KERNEL_REPO:
-        description: "Kernel source repo (HTTPS) — must contain build.sh"
+        description: "Kernel source repo (must contain build.sh)"
         required: true
         default: "https://github.com/AcmeUI-Devices/android_kernel_xiaomi_lisa"
       KERNEL_BRANCH:
@@ -12,7 +12,7 @@ on:
         required: true
         default: "main"
       SUKISU_BRANCH:
-        description: "SukiSU-Ultra branch (main / builtin)"
+        description: "SukiSU-Ultra branch"
         required: true
         default: "main"
         type: choice
@@ -20,7 +20,7 @@ on:
           - main
           - builtin
       DEFCONFIG:
-        description: "Defconfig name (relative to arch/arm64/configs/)"
+        description: "Defconfig (relative to arch/arm64/configs/)"
         required: true
         default: "vendor/lisa_defconfig"
       CLANG_URL:
@@ -28,11 +28,11 @@ on:
         required: true
         default: "https://github.com/ZyCromerZ/Clang/releases/download/21.0.0-20250517-release/Clang-21.0.0-20250517.tar.gz"
       BUILD_ARGS:
-        description: "Extra arguments to pass to kernel build.sh (optional)"
+        description: "Extra build.sh arguments"
         required: false
         default: ""
       ENABLE_KPM:
-        description: "Enable KPM support"
+        description: "Enable KPM"
         required: false
         default: true
         type: boolean
@@ -42,7 +42,7 @@ on:
         default: true
         type: boolean
       SUSFS_REPO:
-        description: "SUSFS repo (ShirkNeko fork recommended for SukiSU-Ultra)"
+        description: "SUSFS repo (ShirkNeko fork for SukiSU-Ultra)"
         required: false
         default: "https://github.com/ShirkNeko/susfs4ksu"
       SUSFS_BRANCH:
@@ -61,11 +61,9 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      # ── checkout this repo ──
       - name: Checkout builder repo
         uses: actions/checkout@v4
 
-      # ── install dependencies ──
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
@@ -75,258 +73,154 @@ jobs:
             python3 python-is-python3 zip unzip wget \
             device-tree-compiler gcc-aarch64-linux-gnu
 
-      # ── setup Clang ──
       - name: Setup Clang toolchain
         run: |
           mkdir -p $GITHUB_WORKSPACE/toolchain/clang
-          echo ">>> Downloading Clang..."
           wget -q "${{ github.event.inputs.CLANG_URL }}" -O clang.tar.gz
           tar -xf clang.tar.gz -C $GITHUB_WORKSPACE/toolchain/clang --strip-components=1
           rm -f clang.tar.gz
           echo "$GITHUB_WORKSPACE/toolchain/clang/bin" >> $GITHUB_PATH
-          echo ">>> Clang version:"
           $GITHUB_WORKSPACE/toolchain/clang/bin/clang --version || true
 
-      # ── clone kernel source ──
       - name: Clone kernel source
         run: |
-          echo ">>> Cloning: ${{ github.event.inputs.KERNEL_REPO }} @ ${{ github.event.inputs.KERNEL_BRANCH }}"
           git clone --depth=1 \
             -b "${{ github.event.inputs.KERNEL_BRANCH }}" \
             "${{ github.event.inputs.KERNEL_REPO }}" \
             $GITHUB_WORKSPACE/kernel
           echo "KERNEL_DIR=$GITHUB_WORKSPACE/kernel" >> $GITHUB_ENV
+          [ -f "$GITHUB_WORKSPACE/kernel/build.sh" ] || { echo "::error::build.sh not found!"; exit 1; }
 
-          if [ -f "$GITHUB_WORKSPACE/kernel/build.sh" ]; then
-            echo ">>> ✅ build.sh found."
-          else
-            echo "::error::build.sh NOT found in kernel source!"
-            ls -la $GITHUB_WORKSPACE/kernel/
-            exit 1
-          fi
-
-      # ── integrate SukiSU-Ultra ──
       - name: Integrate SukiSU-Ultra
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          echo ">>> Integrating SukiSU-Ultra (${{ github.event.inputs.SUKISU_BRANCH }})..."
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" \
             | bash -s "${{ github.event.inputs.SUKISU_BRANCH }}"
-          echo ">>> SukiSU-Ultra integration done."
 
-          # Detect KSU directory name (drivers/kernelsu or KernelSU/kernel)
           if [ -d "drivers/kernelsu" ]; then
             echo "KSU_DIR=drivers/kernelsu" >> $GITHUB_ENV
-            echo ">>> KSU directory: drivers/kernelsu"
           elif [ -d "KernelSU/kernel" ]; then
             echo "KSU_DIR=KernelSU/kernel" >> $GITHUB_ENV
-            echo ">>> KSU directory: KernelSU/kernel"
           else
             echo "KSU_DIR=" >> $GITHUB_ENV
-            echo "::warning::KSU directory not found!"
           fi
 
-      # ══════════════════════════════════════════════════
-      # SUSFS Integration (ENABLED by default)
-      # ══════════════════════════════════════════════════
+      # ════════════════════════════════════════════
+      # SUSFS Integration
+      # ════════════════════════════════════════════
       - name: Integrate SUSFS
         if: ${{ github.event.inputs.ENABLE_SUSFS == 'true' }}
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          echo "============================================"
-          echo ">>> Integrating SUSFS"
-          echo ">>> Repo:   ${{ github.event.inputs.SUSFS_REPO }}"
-          echo ">>> Branch: ${{ github.event.inputs.SUSFS_BRANCH }}"
-          echo "============================================"
+          echo ">>> Integrating SUSFS (${{ github.event.inputs.SUSFS_BRANCH }})..."
 
-          # 1. Clone susfs4ksu
           git clone --depth=1 -b "${{ github.event.inputs.SUSFS_BRANCH }}" \
             "${{ github.event.inputs.SUSFS_REPO }}" \
             $GITHUB_WORKSPACE/susfs4ksu
           SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
 
-          echo ">>> SUSFS repo contents:"
-          ls -la "$SUSFS_DIR/kernel_patches/" 2>/dev/null || echo "  (no kernel_patches dir)"
+          # ── Copy ALL SUSFS source files ──
+          echo ">>> Copying SUSFS source files..."
 
-          # 2. Copy SUSFS source files into kernel tree
-          echo ">>> Step 2: Copying SUSFS source files..."
-
-          # Copy fs/susfs.c
-          if [ -f "$SUSFS_DIR/kernel_patches/fs/susfs.c" ]; then
-            cp -v "$SUSFS_DIR/kernel_patches/fs/susfs.c" fs/susfs.c
-            echo "    ✅ fs/susfs.c"
-          elif [ -d "$SUSFS_DIR/kernel_patches/fs" ]; then
-            cp -rv "$SUSFS_DIR/kernel_patches/fs/"* fs/ 2>/dev/null || true
-            echo "    ✅ fs/ (all files)"
+          # Copy ALL files from kernel_patches/fs/
+          if [ -d "$SUSFS_DIR/kernel_patches/fs" ]; then
+            cp -rv "$SUSFS_DIR/kernel_patches/fs/"* fs/
+            echo "    ✅ fs/ files copied"
           fi
 
-          # Copy include/linux/susfs.h
-          if [ -f "$SUSFS_DIR/kernel_patches/include/linux/susfs.h" ]; then
-            mkdir -p include/linux
-            cp -v "$SUSFS_DIR/kernel_patches/include/linux/susfs.h" include/linux/susfs.h
-            echo "    ✅ include/linux/susfs.h"
-          elif [ -d "$SUSFS_DIR/kernel_patches/include" ]; then
-            cp -rv "$SUSFS_DIR/kernel_patches/include/"* include/ 2>/dev/null || true
-            echo "    ✅ include/ (all files)"
+          # Copy ALL files from kernel_patches/include/ (susfs.h AND susfs_def.h)
+          if [ -d "$SUSFS_DIR/kernel_patches/include" ]; then
+            cp -rv "$SUSFS_DIR/kernel_patches/include/"* include/
+            echo "    ✅ include/ files copied"
           fi
 
-          # 3. Apply KSU-specific SUSFS patch (10_enable_susfs_for_ksu.patch)
+          # Verify ALL susfs headers exist
+          echo ">>> Checking susfs headers:"
+          ls -la include/linux/susfs* 2>/dev/null || echo "    ⚠️ No susfs headers found"
+
+          # ── Apply KSU SUSFS patch ──
           echo ""
-          echo ">>> Step 3: Applying SUSFS KSU patches..."
+          echo ">>> Applying SUSFS KSU patches..."
           KSU_PATCH_DIR="$SUSFS_DIR/kernel_patches/KernelSU"
-          if [ ! -d "$KSU_PATCH_DIR" ]; then
-            # Some repos structure differently
-            KSU_PATCH_DIR="$SUSFS_DIR/kernel_patches"
-          fi
+          [ ! -d "$KSU_PATCH_DIR" ] && KSU_PATCH_DIR="$SUSFS_DIR/kernel_patches"
 
-          # Find and apply the KSU enablement patch
           KSU_APPLIED=false
           for patch_file in \
             "$KSU_PATCH_DIR/10_enable_susfs_for_ksu.patch" \
-            "$KSU_PATCH_DIR/"*enable_susfs*.patch \
-            "$KSU_PATCH_DIR/"*ksu*.patch; do
+            "$KSU_PATCH_DIR/"*enable_susfs*.patch; do
             [ -f "$patch_file" ] || continue
             echo "    >>> Trying: $(basename $patch_file)"
-
-            # Try applying to KSU directory
             if [ -n "$KSU_DIR" ]; then
               if git apply --check --directory="$KSU_DIR" "$patch_file" 2>/dev/null; then
                 git apply --directory="$KSU_DIR" "$patch_file"
-                echo "    ✅ Applied to $KSU_DIR"
-                KSU_APPLIED=true
-                break
+                echo "    ✅ Applied to $KSU_DIR"; KSU_APPLIED=true; break
               fi
-              # Try without --directory (patch may have full paths)
               if git apply --check "$patch_file" 2>/dev/null; then
                 git apply "$patch_file"
-                echo "    ✅ Applied (full path)"
-                KSU_APPLIED=true
-                break
+                echo "    ✅ Applied (full path)"; KSU_APPLIED=true; break
               fi
-              # Try with --reject for partial apply
-              echo "    ⚠️ Clean apply failed, trying with --reject..."
+              echo "    ⚠️ Trying --reject..."
               git apply --reject "$patch_file" 2>/dev/null || true
-              KSU_APPLIED=true
-              break
+              KSU_APPLIED=true; break
             fi
           done
+          [ "$KSU_APPLIED" = false ] && echo "    ⚠️ No KSU patch applied (may be built-in)"
 
-          if [ "$KSU_APPLIED" = false ]; then
-            echo "    ⚠️ No KSU SUSFS patch applied (may already be built-in for SukiSU-Ultra builtin branch)"
-          fi
-
-          # 4. Apply kernel-level SUSFS patch (50_add_susfs_in_kernel-5.4.patch)
+          # ── Apply kernel SUSFS patch ──
           echo ""
-          echo ">>> Step 4: Applying kernel SUSFS patches..."
-          KERNEL_APPLIED=false
+          echo ">>> Applying kernel SUSFS patches..."
           for patch_file in \
             "$SUSFS_DIR/kernel_patches/50_add_susfs_in_kernel-5.4.patch" \
             "$SUSFS_DIR/kernel_patches/"*add_susfs*.patch \
             "$SUSFS_DIR/kernel_patches/"*kernel*.patch; do
             [ -f "$patch_file" ] || continue
-            # Skip KSU patches (already handled above)
             echo "$patch_file" | grep -qiE "ksu|enable_susfs_for_ksu" && continue
             echo "    >>> Trying: $(basename $patch_file)"
             if git apply --check "$patch_file" 2>/dev/null; then
               git apply "$patch_file"
-              echo "    ✅ Applied: $(basename $patch_file)"
-              KERNEL_APPLIED=true
+              echo "    ✅ Applied"
             else
-              echo "    ⚠️ Clean apply failed, trying with --reject..."
+              echo "    ⚠️ Trying --reject..."
               git apply --reject "$patch_file" 2>/dev/null || true
-              KERNEL_APPLIED=true
             fi
           done
 
-          if [ "$KERNEL_APPLIED" = false ]; then
-            echo "    ⚠️ No kernel SUSFS patch found/applied"
-          fi
-
-          # 5. Verify SUSFS integration
+          # ── Verify ──
           echo ""
-          echo ">>> Step 5: Verification..."
-          SUSFS_OK=true
+          echo ">>> Verification:"
+          [ -f "include/linux/susfs.h" ] && echo "    ✅ susfs.h" || echo "    ❌ susfs.h MISSING"
+          [ -f "include/linux/susfs_def.h" ] && echo "    ✅ susfs_def.h" || echo "    ⚠️ susfs_def.h not found (may not exist in this version)"
+          [ -f "fs/susfs.c" ] && echo "    ✅ susfs.c" || echo "    ❌ susfs.c MISSING"
 
-          if [ -f "include/linux/susfs.h" ]; then
-            echo "    ✅ include/linux/susfs.h exists"
-          else
-            echo "    ❌ include/linux/susfs.h MISSING"
-            SUSFS_OK=false
-          fi
-
-          if [ -f "fs/susfs.c" ]; then
-            echo "    ✅ fs/susfs.c exists"
-          else
-            echo "    ❌ fs/susfs.c MISSING"
-            SUSFS_OK=false
-          fi
-
-          # Check if susfs.h defines SUSFS_MAGIC
-          if grep -q "SUSFS_MAGIC" include/linux/susfs.h 2>/dev/null; then
-            echo "    ✅ SUSFS_MAGIC found in susfs.h"
-          else
-            echo "    ⚠️ SUSFS_MAGIC not found in susfs.h (may cause build errors)"
-          fi
-
-          # Check for key functions
-          for sym in susfs_add_sus_path susfs_set_uname susfs_add_sus_kstat; do
-            if grep -rq "$sym" include/linux/susfs.h fs/susfs.c 2>/dev/null; then
-              echo "    ✅ $sym defined"
-            else
-              echo "    ⚠️ $sym not found"
-            fi
-          done
-
-          # List .rej files if any
           REJ_FILES=$(find . -name "*.rej" 2>/dev/null)
           if [ -n "$REJ_FILES" ]; then
-            echo ""
-            echo "    ⚠️ Rejected hunks found:"
-            echo "$REJ_FILES" | while read f; do
-              echo "      - $f"
-              cat "$f"
-            done
+            echo "    ⚠️ Rejected hunks:"
+            echo "$REJ_FILES" | while read f; do echo "      - $f"; done
           fi
 
-          if [ "$SUSFS_OK" = true ]; then
-            echo ""
-            echo ">>> ✅ SUSFS integration complete."
-          else
-            echo ""
-            echo ">>> ⚠️ SUSFS integration incomplete — build may fail."
-            echo ">>> Consider setting ENABLE_SUSFS=false if errors persist."
-          fi
-
-      # ── SUSFS stub if disabled ──
       - name: Handle SUSFS header (disabled)
         if: ${{ github.event.inputs.ENABLE_SUSFS != 'true' }}
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          echo ">>> SUSFS disabled. Creating stub header..."
           mkdir -p include/linux
-          cat > include/linux/susfs.h << 'EOF'
-          #ifndef _LINUX_SUSFS_H
-          #define _LINUX_SUSFS_H
-          /* SUSFS stub — feature disabled */
-          #endif
-          EOF
-          echo ">>> Created stub include/linux/susfs.h"
+          echo -e "#ifndef _LINUX_SUSFS_H\n#define _LINUX_SUSFS_H\n#endif" > include/linux/susfs.h
 
-      # ── apply manual hook patches ──
       - name: Apply manual hook patches
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           chmod +x $GITHUB_WORKSPACE/apply_hooks.sh
           bash $GITHUB_WORKSPACE/apply_hooks.sh
 
-      # ── fix vendor code build errors ──
+      # ════════════════════════════════════════════
+      # Fix ALL vendor code build errors
+      # ════════════════════════════════════════════
       - name: Fix vendor code build errors
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           set -e
           echo ">>> Fixing vendor code build errors..."
 
-          # FIX: rmnet_ipa.c enum conversion
+          # FIX 1: rmnet_ipa.c enum conversion (-Werror,-Wenum-conversion)
           RMNET_IPA="techpack/dataipa/drivers/platform/msm/ipa/ipa_v3/rmnet_ipa.c"
           if [ -f "$RMNET_IPA" ]; then
             sed -i 's/q6_ul_flt_rule_ptr->ip = flt_spec_ptr->ip_type;/q6_ul_flt_rule_ptr->ip = (enum ipa_ip_type)flt_spec_ptr->ip_type;/g' "$RMNET_IPA"
@@ -334,29 +228,59 @@ jobs:
             echo "    [OK] rmnet_ipa.c enum casts"
           fi
 
-          # FIX: sde_hw_dsc_1_2.c missing return type
+          # FIX 2: sde_hw_dsc_1_2.c missing return type (-Werror,-Wimplicit-int)
           SDE_DSC="techpack/display/msm/sde/sde_hw_dsc_1_2.c"
           if [ -f "$SDE_DSC" ]; then
             sed -i 's/^static inline _dsc_subblk_offset/static inline int _dsc_subblk_offset/g' "$SDE_DSC"
-            echo "    [OK] sde_hw_dsc_1_2.c return type fix"
+            echo "    [OK] sde_hw_dsc_1_2.c return type"
           fi
 
-          echo ">>> Vendor fixes applied."
+          # FIX 3 (NEW): sde_hw_vdc.c missing return type (-Werror,-Wimplicit-int)
+          SDE_VDC="techpack/display/msm/sde/sde_hw_vdc.c"
+          if [ -f "$SDE_VDC" ]; then
+            sed -i 's/^static inline _vdc_subblk_offset/static inline int _vdc_subblk_offset/g' "$SDE_VDC"
+            echo "    [OK] sde_hw_vdc.c return type"
+          fi
 
-      # ── update defconfig ──
+          # FIX 4 (NEW): tcp_timer.c 1-bit bitfield truncation (-Werror,-Wsingle-bit-bitfield-constant-conversion)
+          TCP_TIMER="net/ipv4/tcp_timer.c"
+          if [ -f "$TCP_TIMER" ]; then
+            # icsk->icsk_mtup.enabled = 1; → change to unsigned-safe assignment
+            sed -i 's/icsk->icsk_mtup\.enabled = 1;/icsk->icsk_mtup.enabled = (unsigned)1;/g' "$TCP_TIMER"
+            echo "    [OK] tcp_timer.c bitfield fix"
+          fi
+
+          # FIX 4b: Alternative — fix the struct definition to use unsigned
+          # If the struct uses 'signed int enabled:1', change it to 'unsigned int enabled:1'
+          for header in include/net/inet_connection_sock.h include/linux/tcp.h; do
+            if [ -f "$header" ] && grep -q "enabled:1" "$header"; then
+              # Check if it's signed (no unsigned keyword before it)
+              if grep -qP '^\s+(?!unsigned)\w+\s+enabled\s*:\s*1' "$header" 2>/dev/null; then
+                echo "    [INFO] Found signed bitfield in $header (may need manual fix)"
+              fi
+            fi
+          done
+
+          # FIX 5: Catch-all — fix ALL missing return types in techpack/display
+          # Some sde_hw_*.c files may have the same pattern
+          find techpack/display -name "*.c" -exec grep -l "^static inline _.*_subblk_offset" {} \; 2>/dev/null | while read f; do
+            sed -i 's/^static inline _\([a-z]*\)_subblk_offset/static inline int _\1_subblk_offset/g' "$f"
+            echo "    [OK] $(basename $f) return type (catch-all)"
+          done
+
+          echo ">>> All vendor fixes applied."
+
       - name: Update defconfig
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           DEFCONFIG_PATH="arch/arm64/configs/${{ github.event.inputs.DEFCONFIG }}"
           echo ">>> Updating defconfig: $DEFCONFIG_PATH"
 
-          # Remove ALL KSU/SUSFS/KPM related entries
           sed -i '/CONFIG_KSU/d' "$DEFCONFIG_PATH"
           sed -i '/CONFIG_KPROBES/d' "$DEFCONFIG_PATH"
           sed -i '/CONFIG_KPM/d' "$DEFCONFIG_PATH"
           sed -i '/CONFIG_KALLSYMS_ALL/d' "$DEFCONFIG_PATH"
 
-          # Core KSU configs
           {
             echo ""
             echo "# --- SukiSU-Ultra ---"
@@ -367,13 +291,10 @@ jobs:
             echo "CONFIG_KALLSYMS_ALL=y"
           } >> "$DEFCONFIG_PATH"
 
-          # KPM
           if [ "${{ github.event.inputs.ENABLE_KPM }}" = "true" ]; then
             echo "CONFIG_KPM=y" >> "$DEFCONFIG_PATH"
-            echo ">>> KPM enabled."
           fi
 
-          # SUSFS
           if [ "${{ github.event.inputs.ENABLE_SUSFS }}" = "true" ]; then
             {
               echo "# --- SUSFS ---"
@@ -390,25 +311,16 @@ jobs:
             } >> "$DEFCONFIG_PATH"
             echo ">>> SUSFS enabled (SUS_SU disabled for manual hooks)."
           else
-            {
-              echo "# --- SUSFS (disabled) ---"
-              echo "# CONFIG_KSU_SUSFS is not set"
-            } >> "$DEFCONFIG_PATH"
+            echo "# CONFIG_KSU_SUSFS is not set" >> "$DEFCONFIG_PATH"
             echo ">>> SUSFS disabled."
           fi
 
-          echo ""
           echo "--- Tail of defconfig ---"
           tail -25 "$DEFCONFIG_PATH"
 
-      # ── build kernel ──
       - name: Build kernel via build.sh
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          echo "============================================"
-          echo ">>> Building kernel via build.sh"
-          echo "============================================"
-
           chmod +x build.sh
 
           export ARCH=arm64
@@ -427,72 +339,47 @@ jobs:
           export TC_DIR="$GITHUB_WORKSPACE/toolchain/clang"
 
           BUILD_START=$(date +%s)
-
           bash build.sh ${{ github.event.inputs.BUILD_ARGS }} 2>&1 | tee $GITHUB_WORKSPACE/build.log
           BUILD_RC=${PIPESTATUS[0]}
-
           BUILD_END=$(date +%s)
-          BUILD_ELAPSED=$(( BUILD_END - BUILD_START ))
-          echo ""
-          echo ">>> Build time: $((BUILD_ELAPSED/60))m $((BUILD_ELAPSED%60))s (exit: $BUILD_RC)"
+          echo ">>> Build time: $(( (BUILD_END-BUILD_START)/60 ))m $(( (BUILD_END-BUILD_START)%60 ))s (exit: $BUILD_RC)"
+          [ $BUILD_RC -ne 0 ] && { echo "::error::Build FAILED!"; exit $BUILD_RC; }
 
-          if [ $BUILD_RC -ne 0 ]; then
-            echo "::error::Kernel build FAILED!"
-            exit $BUILD_RC
-          fi
-        env:
-          KERNEL_DIR: ${{ env.KERNEL_DIR }}
-
-      # ── locate kernel image ──
       - name: Locate kernel image
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           KERNEL_IMAGE=""
-          for search_dir in "out/arch/arm64/boot" "arch/arm64/boot" "out/dist"; do
+          for d in "out/arch/arm64/boot" "arch/arm64/boot" "out/dist"; do
             for img in Image Image.gz Image.gz-dtb; do
-              [ -f "$search_dir/$img" ] && KERNEL_IMAGE="$(realpath "$search_dir/$img")" && break 2
+              [ -f "$d/$img" ] && KERNEL_IMAGE="$(realpath "$d/$img")" && break 2
             done
           done
-
-          if [ -z "$KERNEL_IMAGE" ]; then
-            echo "::error::No kernel image found!"
-            find . -name "Image*" -type f 2>/dev/null | head -10
-            exit 1
-          fi
-
-          echo ">>> ✅ Image: $KERNEL_IMAGE ($(du -h "$KERNEL_IMAGE" | cut -f1))"
+          [ -z "$KERNEL_IMAGE" ] && { echo "::error::No kernel image!"; find . -name "Image*" -type f 2>/dev/null | head -10; exit 1; }
+          echo ">>> ✅ $KERNEL_IMAGE ($(du -h "$KERNEL_IMAGE" | cut -f1))"
           echo "KERNEL_IMAGE=$KERNEL_IMAGE" >> $GITHUB_ENV
           echo "OUT_BASE=$(dirname "$(dirname "$(dirname "$KERNEL_IMAGE")")")" >> $GITHUB_ENV
 
-      # ── package AnyKernel3 ──
       - name: Package with AnyKernel3
         run: |
           git clone --depth=1 "${{ github.event.inputs.ANYKERNEL_REPO }}" $GITHUB_WORKSPACE/AnyKernel3
           cp $GITHUB_WORKSPACE/anykernel.sh $GITHUB_WORKSPACE/AnyKernel3/anykernel.sh
           cp "$KERNEL_IMAGE" $GITHUB_WORKSPACE/AnyKernel3/
-
-          for dts_dir in "$OUT_BASE/arch/arm64/boot/dts" "$KERNEL_DIR/out/arch/arm64/boot/dts"; do
-            [ -d "$dts_dir" ] && find "$dts_dir" -name "*.dtb" -exec cp {} $GITHUB_WORKSPACE/AnyKernel3/ \; 2>/dev/null && break
+          for d in "$OUT_BASE/arch/arm64/boot/dts" "$KERNEL_DIR/out/arch/arm64/boot/dts"; do
+            [ -d "$d" ] && find "$d" -name "*.dtb" -exec cp {} $GITHUB_WORKSPACE/AnyKernel3/ \; 2>/dev/null && break
           done
-          for dtbo in "$OUT_BASE/arch/arm64/boot/dtbo.img" "$KERNEL_DIR/out/arch/arm64/boot/dtbo.img"; do
-            [ -f "$dtbo" ] && cp "$dtbo" $GITHUB_WORKSPACE/AnyKernel3/ && break
+          for f in "$OUT_BASE/arch/arm64/boot/dtbo.img" "$KERNEL_DIR/out/arch/arm64/boot/dtbo.img"; do
+            [ -f "$f" ] && cp "$f" $GITHUB_WORKSPACE/AnyKernel3/ && break
           done
-
-          cd $GITHUB_WORKSPACE/AnyKernel3
-          rm -rf .git .github LICENSE README.md
-
-          SUSFS_TAG=""
-          [ "${{ github.event.inputs.ENABLE_SUSFS }}" = "true" ] && SUSFS_TAG="-SUSFS"
+          cd $GITHUB_WORKSPACE/AnyKernel3; rm -rf .git .github LICENSE README.md
+          SUSFS_TAG=""; [ "${{ github.event.inputs.ENABLE_SUSFS }}" = "true" ] && SUSFS_TAG="-SUSFS"
           ZIPNAME="SukiSU-Ultra${SUSFS_TAG}-lisa-$(date +%Y%m%d-%H%M)-AnyKernel3.zip"
           zip -r9 "$GITHUB_WORKSPACE/$ZIPNAME" . -x '*.git*'
           echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
-          echo ">>> ✅ $ZIPNAME"
         env:
           KERNEL_DIR: ${{ env.KERNEL_DIR }}
           KERNEL_IMAGE: ${{ env.KERNEL_IMAGE }}
           OUT_BASE: ${{ env.OUT_BASE }}
 
-      # ── upload artifacts ──
       - name: Upload AnyKernel3 zip
         uses: actions/upload-artifact@v4
         with:
