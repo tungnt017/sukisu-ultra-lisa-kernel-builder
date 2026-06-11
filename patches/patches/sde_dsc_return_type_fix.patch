@@ -1,0 +1,2 @@
+# Fix missing int return type in sde_hw_dsc_1_2.c
+# See apply_hooks.sh and workflow for actual implementation.

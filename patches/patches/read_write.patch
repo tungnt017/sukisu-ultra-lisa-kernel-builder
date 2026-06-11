@@ -1,0 +1,2 @@
+# Hook vfs_read() — uses grep -n for exact line matching
+# See apply_hooks.sh and workflow for actual implementation.
