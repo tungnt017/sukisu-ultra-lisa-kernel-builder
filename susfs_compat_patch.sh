@@ -1,196 +1,273 @@
 #!/usr/bin/env bash
 # ============================================================
-#  susfs_compat_patch.sh
-#  Auto-detects SUSFS API version mismatch and generates
-#  compatibility stubs for SukiSU-Ultra dispatch.c
+#  susfs_compat_patch.sh v8
+#  Fixes ALL missing symbols between SUSFS v1.3.8 and
+#  SukiSU-Ultra v4.1.3 builtin branch (expects v1.5+)
 # ============================================================
 set -euo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
-info()  { echo -e "${CYAN}[SUSFS-COMPAT]${NC} $*"; }
+info()  { echo -e "${CYAN}[COMPAT]${NC} $*"; }
 ok()    { echo -e "${GREEN}  [OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}  [WARN]${NC} $*"; }
 
-SUSFS_H="include/linux/susfs.h"
-
-if [ ! -f "$SUSFS_H" ]; then
-    warn "susfs.h not found — skipping compat check"
-    exit 0
-fi
-
 echo ""
 echo "============================================"
-echo "  SUSFS API Compatibility Patcher"
+echo "  SUSFS/KSU Missing Symbol Fixer v8"
 echo "============================================"
 echo ""
 
-NEED_COMPAT=false
-MISSING_SYMBOLS=""
-
-# Check for symbols that SukiSU-Ultra dispatch.c expects
-declare -A REQUIRED_SYMBOLS=(
-    ["SUSFS_MAGIC"]="define"
-    ["CMD_SUSFS_ADD_SUS_PATH_LOOP"]="define"
-    ["CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS"]="define"
-    ["CMD_SUSFS_ADD_SUS_MAP"]="define"
-    ["CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING"]="define"
-    ["susfs_add_sus_path_loop"]="func"
-    ["susfs_set_hide_sus_mnts_for_non_su_procs"]="func"
-    ["susfs_add_sus_map"]="func"
-    ["susfs_set_avc_log_spoofing"]="func"
-    ["susfs_start_sdcard_monitor_fn"]="func"
-    ["susfs_enable_log"]="func"
-)
-
-for sym in "${!REQUIRED_SYMBOLS[@]}"; do
-    if grep -rq "$sym" include/linux/susfs*.h fs/susfs.c 2>/dev/null; then
-        ok "$sym found"
-    else
-        warn "$sym MISSING"
-        NEED_COMPAT=true
-        MISSING_SYMBOLS="$MISSING_SYMBOLS $sym"
-    fi
-done
-
-# Check susfs_get_enabled_features signature (1 arg vs 2 args)
-if grep -q "susfs_get_enabled_features" "$SUSFS_H" 2>/dev/null; then
-    ARGS=$(grep "susfs_get_enabled_features" "$SUSFS_H" | head -1)
-    if echo "$ARGS" | grep -q "bufsize\|size_t"; then
-        ok "susfs_get_enabled_features (2-arg version)"
-    else
-        warn "susfs_get_enabled_features is 1-arg (dispatch.c expects 2-arg)"
-        NEED_COMPAT=true
-        MISSING_SYMBOLS="$MISSING_SYMBOLS susfs_get_enabled_features_2arg"
-    fi
-fi
-
-if [ "$NEED_COMPAT" = false ]; then
-    ok "SUSFS API is fully compatible — no stubs needed!"
-    exit 0
-fi
-
-info "Generating compatibility stubs..."
-
-# ── Figure out which CMD values exist and pick next ones ──
-# Get the last CMD number from susfs.h or susfs_def.h
-LAST_CMD=$(grep -h "CMD_SUSFS_" include/linux/susfs*.h 2>/dev/null | grep -oP '\d+' | sort -n | tail -1)
-[ -z "$LAST_CMD" ] && LAST_CMD=50
-NEXT_CMD=$((LAST_CMD + 1))
-
-# ── Generate compat header ──
-COMPAT_H="include/linux/susfs_compat.h"
-cat > "$COMPAT_H" << 'COMPAT_EOF'
-/* SPDX-License-Identifier: GPL-2.0 */
-/*
- * susfs_compat.h — Auto-generated compatibility stubs
- * Bridges SUSFS v1.3.8 API → v1.5+ API expected by SukiSU-Ultra
- * Missing functions become no-ops, missing defines get placeholder values.
- */
-#ifndef _LINUX_SUSFS_COMPAT_H
-#define _LINUX_SUSFS_COMPAT_H
-
-#include <linux/errno.h>
-
-COMPAT_EOF
-
-# Add missing #defines
-CMD_VAL=$NEXT_CMD
-for sym in SUSFS_MAGIC CMD_SUSFS_ADD_SUS_PATH_LOOP CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS CMD_SUSFS_ADD_SUS_MAP CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING; do
-    if echo "$MISSING_SYMBOLS" | grep -q "$sym"; then
-        if [ "$sym" = "SUSFS_MAGIC" ]; then
-            echo "#ifndef $sym" >> "$COMPAT_H"
-            echo "#define $sym 0x535553" >> "$COMPAT_H"
-            echo "#endif" >> "$COMPAT_H"
-        else
-            echo "#ifndef $sym" >> "$COMPAT_H"
-            echo "#define $sym $CMD_VAL" >> "$COMPAT_H"
-            echo "#endif" >> "$COMPAT_H"
-            CMD_VAL=$((CMD_VAL + 1))
-        fi
-        ok "Added define: $sym"
-    fi
-done
-
-echo "" >> "$COMPAT_H"
-
-# Add missing function stubs
-for sym in susfs_add_sus_path_loop susfs_set_hide_sus_mnts_for_non_su_procs susfs_add_sus_map susfs_set_avc_log_spoofing; do
-    if echo "$MISSING_SYMBOLS" | grep -q "$sym"; then
-        cat >> "$COMPAT_H" << EOF
-static inline int ${sym}(void *arg) { return -ENOSYS; }
-EOF
-        ok "Added stub: $sym()"
-    fi
-done
-
-if echo "$MISSING_SYMBOLS" | grep -q "susfs_start_sdcard_monitor_fn"; then
-    echo "static inline void susfs_start_sdcard_monitor_fn(void) { }" >> "$COMPAT_H"
-    ok "Added stub: susfs_start_sdcard_monitor_fn()"
-fi
-
-if echo "$MISSING_SYMBOLS" | grep -q "susfs_enable_log"; then
-    echo "static inline int susfs_enable_log(void *arg) { return 0; }" >> "$COMPAT_H"
-    ok "Added stub: susfs_enable_log()"
-fi
-
-# Fix susfs_get_enabled_features if needed (2-arg wrapper)
-if echo "$MISSING_SYMBOLS" | grep -q "susfs_get_enabled_features_2arg"; then
-    cat >> "$COMPAT_H" << 'EOF'
-
-/* Wrapper: dispatch.c calls susfs_get_enabled_features(buf, len) but old API has 1 arg */
-/* We rename the old one and provide a 2-arg version */
-EOF
-    ok "Note: susfs_get_enabled_features needs manual review"
-fi
-
-echo "" >> "$COMPAT_H"
-echo "#endif /* _LINUX_SUSFS_COMPAT_H */" >> "$COMPAT_H"
-
-# ── Include compat header in susfs.h ──
-if ! grep -q "susfs_compat.h" "$SUSFS_H"; then
-    # Add include at the end, before the final #endif
-    LAST_ENDIF=$(grep -n "^#endif" "$SUSFS_H" | tail -1 | cut -d: -f1)
-    if [ -n "$LAST_ENDIF" ]; then
-        sed -i "${LAST_ENDIF}i\\#include <linux/susfs_compat.h>" "$SUSFS_H"
-        ok "Included susfs_compat.h in susfs.h"
-    fi
-fi
-
-# ── Fix dispatch.c pointer type mismatches ──
-# dispatch.c passes `void *arg` but old susfs functions expect typed pointers
-# Fix: add explicit casts in dispatch.c
+# ── Find KSU directory ──
 KSU_DIR=""
 [ -d "drivers/kernelsu" ] && KSU_DIR="drivers/kernelsu"
 [ -d "KernelSU/kernel" ] && KSU_DIR="KernelSU/kernel"
+if [ -z "$KSU_DIR" ]; then
+    warn "KSU directory not found — skipping"
+    exit 0
+fi
+info "KSU directory: $KSU_DIR"
 
-if [ -n "$KSU_DIR" ]; then
-    DISPATCH="$KSU_DIR/supercall/dispatch.c"
-    [ ! -f "$DISPATCH" ] && DISPATCH=$(find "$KSU_DIR" -name "dispatch.c" -type f | head -1)
+# ════════════════════════════════════════════
+# FIX 1: strncpy_from_user_nofault
+# event.c calls strncpy_from_user_nofault but kernel 5.4 has __strncpy_from_user_nofault
+# ════════════════════════════════════════════
+info "Fixing strncpy_from_user_nofault..."
 
-    if [ -f "$DISPATCH" ]; then
-        info "Fixing pointer casts in dispatch.c..."
-
-        # Cast void* arg to the expected struct pointer types
-        sed -i 's/susfs_add_sus_path(arg)/susfs_add_sus_path((struct st_susfs_sus_path __user *)arg)/g' "$DISPATCH"
-        sed -i 's/susfs_add_sus_kstat(arg)/susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)arg)/g' "$DISPATCH"
-        sed -i 's/susfs_update_sus_kstat(arg)/susfs_update_sus_kstat((struct st_susfs_sus_kstat __user *)arg)/g' "$DISPATCH"
-        sed -i 's/susfs_set_uname(arg)/susfs_set_uname((struct st_susfs_uname __user *)arg)/g' "$DISPATCH"
-        sed -i 's/susfs_set_cmdline_or_bootconfig(arg)/susfs_set_cmdline_or_bootconfig((char __user *)arg)/g' "$DISPATCH"
-        sed -i 's/susfs_add_open_redirect(arg)/susfs_add_open_redirect((struct st_susfs_open_redirect __user *)arg)/g' "$DISPATCH"
-
-        # Fix susfs_get_enabled_features if it's called with 1 arg but header expects 2
-        # Check how it's called in dispatch.c
-        if grep -q "susfs_get_enabled_features(arg)" "$DISPATCH" 2>/dev/null; then
-            sed -i 's/susfs_get_enabled_features(arg)/susfs_get_enabled_features((char __user *)arg, 4096)/g' "$DISPATCH"
-            ok "Fixed susfs_get_enabled_features args"
+COMPAT_H=$(find "$KSU_DIR" -name "kernel_compat.h" -type f | head -1)
+if [ -n "$COMPAT_H" ]; then
+    if ! grep -q "^#define strncpy_from_user_nofault" "$COMPAT_H" 2>/dev/null; then
+        # Find if __strncpy_from_user_nofault is declared
+        if grep -q "__strncpy_from_user_nofault" "$COMPAT_H" 2>/dev/null; then
+            # Add the define right after the __strncpy_from_user_nofault declaration
+            sed -i '/__strncpy_from_user_nofault/a \
+#ifndef strncpy_from_user_nofault\
+#define strncpy_from_user_nofault __strncpy_from_user_nofault\
+#endif' "$COMPAT_H"
+            ok "Added strncpy_from_user_nofault → __strncpy_from_user_nofault in kernel_compat.h"
+        else
+            # Add at the end before final #endif
+            LAST_ENDIF=$(grep -n "^#endif" "$COMPAT_H" | tail -1 | cut -d: -f1)
+            if [ -n "$LAST_ENDIF" ]; then
+                sed -i "${LAST_ENDIF}i\\
+#ifndef strncpy_from_user_nofault\\
+extern long __strncpy_from_user_nofault(char *dst, const void __user *unsafe_addr, long count);\\
+#define strncpy_from_user_nofault __strncpy_from_user_nofault\\
+#endif" "$COMPAT_H"
+                ok "Added strncpy_from_user_nofault compat to kernel_compat.h"
+            fi
         fi
+    else
+        ok "strncpy_from_user_nofault already defined"
+    fi
+else
+    warn "kernel_compat.h not found"
+fi
 
-        ok "Pointer casts fixed in dispatch.c"
+# ════════════════════════════════════════════
+# FIX 2: Create comprehensive stubs file
+# ════════════════════════════════════════════
+info "Creating SUSFS/KSU compat stubs..."
+
+STUBS_FILE="$KSU_DIR/susfs_compat_stubs.c"
+cat > "$STUBS_FILE" << 'STUBS_EOF'
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * susfs_compat_stubs.c — Auto-generated compatibility stubs
+ * Provides missing function implementations for SUSFS/KSU API mismatches
+ * Generated by susfs_compat_patch.sh v8
+ */
+
+#include <linux/types.h>
+#include <linux/errno.h>
+#include <linux/string.h>
+#include <linux/printk.h>
+
+#ifdef CONFIG_KSU_SUSFS
+
+/* ─── SUSFS utility functions ─── */
+
+/* susfs_starts_with: check if str starts with prefix */
+#ifndef SUSFS_HAS_STARTS_WITH
+bool __attribute__((weak)) susfs_starts_with(const char *str, const char *prefix)
+{
+    if (!str || !prefix)
+        return false;
+    return strncmp(str, prefix, strlen(prefix)) == 0;
+}
+#endif
+
+/* susfs_ends_with: check if str ends with suffix */
+#ifndef SUSFS_HAS_ENDS_WITH
+bool __attribute__((weak)) susfs_ends_with(const char *str, const char *suffix)
+{
+    size_t str_len, suffix_len;
+    if (!str || !suffix)
+        return false;
+    str_len = strlen(str);
+    suffix_len = strlen(suffix);
+    if (suffix_len > str_len)
+        return false;
+    return strcmp(str + str_len - suffix_len, suffix) == 0;
+}
+#endif
+
+/* ─── SUSFS proc mount tracking ─── */
+
+#ifndef SUSFS_HAS_PROC_UMOUNTED
+static DEFINE_PER_CPU(bool, __susfs_proc_umounted);
+
+bool __attribute__((weak)) susfs_is_current_proc_umounted(void)
+{
+    return this_cpu_read(__susfs_proc_umounted);
+}
+
+void __attribute__((weak)) susfs_set_current_proc_umounted(void)
+{
+    this_cpu_write(__susfs_proc_umounted, true);
+}
+#endif
+
+/* ─── SUSFS show variant/version (for supercall dispatch) ─── */
+
+#ifndef SUSFS_HAS_SHOW_VARIANT
+int __attribute__((weak)) susfs_show_variant(void __user *arg)
+{
+    /* Return 0 = success, variant info not available in this build */
+    return 0;
+}
+#endif
+
+#ifndef SUSFS_HAS_SHOW_VERSION
+int __attribute__((weak)) susfs_show_version(void __user *arg)
+{
+    return 0;
+}
+#endif
+
+#endif /* CONFIG_KSU_SUSFS */
+
+/* ─── KSU SELinux hide functions ─── */
+
+void __attribute__((weak)) ksu_selinux_hide_handle_post_fs_data(void)
+{
+    /* no-op stub — SELinux hide not available in this build */
+}
+
+void __attribute__((weak)) ksu_selinux_hide_handle_second_stage(void)
+{
+    /* no-op stub */
+}
+STUBS_EOF
+
+ok "Created $STUBS_FILE"
+
+# ════════════════════════════════════════════
+# FIX 3: Add stubs to KSU Makefile
+# ════════════════════════════════════════════
+info "Adding stubs to KSU Makefile..."
+
+KSU_MAKEFILE="$KSU_DIR/Makefile"
+if [ -f "$KSU_MAKEFILE" ]; then
+    if ! grep -q "susfs_compat_stubs" "$KSU_MAKEFILE"; then
+        # Add the stubs object to the build
+        # Try to find the existing obj-y or kernelsu-objs line and append
+        if grep -q "kernelsu-objs" "$KSU_MAKEFILE" 2>/dev/null; then
+            # Module-style Makefile
+            sed -i '/kernelsu-objs.*:=/s/$/ susfs_compat_stubs.o/' "$KSU_MAKEFILE"
+            ok "Added susfs_compat_stubs.o to kernelsu-objs"
+        elif grep -q "^obj-" "$KSU_MAKEFILE" 2>/dev/null; then
+            # Add a new obj line
+            echo "" >> "$KSU_MAKEFILE"
+            echo "# SUSFS/KSU compat stubs" >> "$KSU_MAKEFILE"
+            echo 'obj-$(CONFIG_KSU) += susfs_compat_stubs.o' >> "$KSU_MAKEFILE"
+            ok "Added susfs_compat_stubs.o as obj-\$(CONFIG_KSU)"
+        else
+            echo "" >> "$KSU_MAKEFILE"
+            echo 'obj-y += susfs_compat_stubs.o' >> "$KSU_MAKEFILE"
+            ok "Added susfs_compat_stubs.o as obj-y (fallback)"
+        fi
+    else
+        ok "susfs_compat_stubs already in Makefile"
+    fi
+else
+    warn "KSU Makefile not found at $KSU_MAKEFILE"
+fi
+
+# ════════════════════════════════════════════
+# FIX 4: Ensure function declarations exist in headers
+# ════════════════════════════════════════════
+info "Ensuring function declarations in headers..."
+
+SUSFS_H="include/linux/susfs.h"
+if [ -f "$SUSFS_H" ]; then
+    LAST_ENDIF=$(grep -n "^#endif" "$SUSFS_H" | tail -1 | cut -d: -f1)
+    
+    DECLS_NEEDED=""
+    
+    grep -q "susfs_starts_with" "$SUSFS_H" 2>/dev/null || DECLS_NEEDED="${DECLS_NEEDED}\nbool susfs_starts_with(const char *str, const char *prefix);"
+    grep -q "susfs_ends_with" "$SUSFS_H" 2>/dev/null || DECLS_NEEDED="${DECLS_NEEDED}\nbool susfs_ends_with(const char *str, const char *suffix);"
+    grep -q "susfs_is_current_proc_umounted" "$SUSFS_H" 2>/dev/null || DECLS_NEEDED="${DECLS_NEEDED}\nbool susfs_is_current_proc_umounted(void);"
+    grep -q "susfs_set_current_proc_umounted" "$SUSFS_H" 2>/dev/null || DECLS_NEEDED="${DECLS_NEEDED}\nvoid susfs_set_current_proc_umounted(void);"
+    grep -q "susfs_show_variant" "$SUSFS_H" 2>/dev/null || DECLS_NEEDED="${DECLS_NEEDED}\nint susfs_show_variant(void __user *arg);"
+    grep -q "susfs_show_version" "$SUSFS_H" 2>/dev/null || DECLS_NEEDED="${DECLS_NEEDED}\nint susfs_show_version(void __user *arg);"
+
+    if [ -n "$DECLS_NEEDED" ]; then
+        sed -i "${LAST_ENDIF}i\\
+/* Auto-generated compat declarations */\\
+${DECLS_NEEDED}" "$SUSFS_H"
+        ok "Added missing declarations to susfs.h"
+    else
+        ok "All declarations already present"
+    fi
+fi
+
+# ════════════════════════════════════════════
+# FIX 5: Add ksu_selinux_hide declarations
+# ════════════════════════════════════════════
+info "Ensuring KSU SELinux hide declarations..."
+
+# Find the header that declares ksu_selinux functions
+SELINUX_H=$(find "$KSU_DIR" -name "selinux.h" -o -name "ksu.h" -o -name "allowlist.h" | head -1)
+if [ -z "$SELINUX_H" ]; then
+    # Create a simple header
+    SELINUX_H="$KSU_DIR/selinux_compat.h"
+    if [ ! -f "$SELINUX_H" ]; then
+        cat > "$SELINUX_H" << 'EOF'
+#ifndef _KSU_SELINUX_COMPAT_H
+#define _KSU_SELINUX_COMPAT_H
+void ksu_selinux_hide_handle_post_fs_data(void);
+void ksu_selinux_hide_handle_second_stage(void);
+#endif
+EOF
+        ok "Created selinux_compat.h"
+    fi
+else
+    if ! grep -q "ksu_selinux_hide_handle_post_fs_data" "$SELINUX_H" 2>/dev/null; then
+        LAST_ENDIF=$(grep -n "^#endif" "$SELINUX_H" | tail -1 | cut -d: -f1)
+        if [ -n "$LAST_ENDIF" ]; then
+            sed -i "${LAST_ENDIF}i\\
+/* KSU SELinux hide compat */\\
+void ksu_selinux_hide_handle_post_fs_data(void);\\
+void ksu_selinux_hide_handle_second_stage(void);" "$SELINUX_H"
+            ok "Added SELinux hide declarations to $SELINUX_H"
+        fi
+    else
+        ok "SELinux hide declarations already present"
+    fi
+fi
+
+# Also add include in ksud.c if the declarations aren't found
+KSUD_C=$(find "$KSU_DIR" -name "ksud.c" -type f | head -1)
+if [ -n "$KSUD_C" ] && [ -f "$SELINUX_H" ]; then
+    HEADER_NAME=$(basename "$SELINUX_H")
+    if ! grep -q "$HEADER_NAME" "$KSUD_C" 2>/dev/null; then
+        # The functions might be declared elsewhere; the __attribute__((weak)) stubs should handle it
+        ok "ksud.c — weak stubs will provide ksu_selinux_hide_* implementations"
     fi
 fi
 
 echo ""
 echo "============================================"
-echo "  SUSFS Compat patching complete."
+echo "  SUSFS/KSU Compat patching complete."
 echo "============================================"
 echo ""
