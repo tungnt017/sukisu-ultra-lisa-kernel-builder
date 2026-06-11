@@ -26,9 +26,7 @@ echo ""
 # 1. fs/exec.c
 FILE="fs/exec.c"
 info "Patching $FILE ..."
-if grep -q "ksu_handle_execveat" "$FILE"; then
-    skip "already patched."
-else
+if grep -q "ksu_handle_execveat" "$FILE"; then skip "already patched."; else
     FUNC_LINE=$(find_line "$FILE" "^static int do_execveat_common")
     if [ -z "$FUNC_LINE" ]; then fail "do_execveat_common not found"; else
         EXTERN='#ifdef CONFIG_KSU\nextern bool ksu_execveat_hook __read_mostly;\nextern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,\n\t\t\tvoid *envp, int *flags);\nextern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,\n\t\t\t\t void *argv, void *envp, int *flags);\n#endif'
@@ -72,14 +70,13 @@ info "Patching $FILE ..."
 if grep -q "ksu_handle_vfs_read" "$FILE"; then skip "already patched."; else
     FUNC_LINE=$(find_line "$FILE" "^ssize_t vfs_read(")
     if [ -z "$FUNC_LINE" ]; then fail "vfs_read not found"; else
-        info "  Found vfs_read at line $FUNC_LINE"
         EXTERN='#ifdef CONFIG_KSU\nextern bool ksu_vfs_read_hook __read_mostly;\nextern int ksu_handle_vfs_read(struct file **file_ptr, char __user **buf_ptr,\n\t\t\tsize_t *count_ptr, loff_t **pos);\n#endif'
         sed -i "${FUNC_LINE}i\\${EXTERN}" "$FILE"
         FUNC_LINE=$(find_line "$FILE" "^ssize_t vfs_read(")
         INSERT_LINE=$(find_line_after "$FILE" "$FUNC_LINE" "if (!(file->f_mode & FMODE_READ))")
         if [ -n "$INSERT_LINE" ]; then
             DISTANCE=$((INSERT_LINE - FUNC_LINE))
-            if [ "$DISTANCE" -gt 30 ]; then fail "FMODE_READ too far ($DISTANCE lines)"; INSERT_LINE=""; fi
+            [ "$DISTANCE" -gt 30 ] && { fail "FMODE_READ too far"; INSERT_LINE=""; }
         fi
         if [ -n "$INSERT_LINE" ]; then
             HOOK='#ifdef CONFIG_KSU\n\tif (unlikely(ksu_vfs_read_hook))\n\t\tksu_handle_vfs_read(\&file, \&buf, \&count, \&pos);\n#endif'
@@ -115,7 +112,7 @@ if grep -q "ksu_handle_stat" "$FILE"; then skip "already patched."; else
             if [ "$DISTANCE" -le 20 ]; then
                 HOOK="#ifdef CONFIG_KSU\n\tksu_handle_stat(\&dfd, \&filename, \&${FLAG_VAR});\n#endif"
                 sed -i "${INSERT_LINE}i\\${HOOK}" "$FILE"; ok "Patched [$FUNC_NAME]"
-            else fail "if() too far ($DISTANCE lines)"; fi
+            else fail "if() too far"; fi
         else fail "No if() found"; fi
     fi
 fi
