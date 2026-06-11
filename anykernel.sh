@@ -5,7 +5,7 @@
 ## AnyKernel setup
 # begin properties
 properties() { '
-kernel.string=SukiSU-Ultra Kernel for Xiaomi 11 Lite NE 5G (lisa)
+kernel.string=SukiSU-Ultra + SUSFS Kernel for Xiaomi 11 Lite NE 5G (lisa)
 do.devicecheck=1
 do.modules=0
 do.systemless=1
@@ -25,16 +25,12 @@ ramdisk_compression=auto;
 patch_vbmeta_flag=auto;
 
 ## AnyKernel methods (DO NOT CHANGE)
-# import patching functions/variables - see tools/ak3-core.sh
 . tools/ak3-core.sh;
 
 ## AnyKernel file attributes
-# set permissions/ownership for included ramdisk files
 set_perm_recursive 0 0 755 644 $ramdisk/*;
 
 ## AnyKernel install
 dump_boot;
-
-# Install kernel image
 write_boot;
 ## end install
