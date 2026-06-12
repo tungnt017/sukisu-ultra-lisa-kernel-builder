@@ -95,14 +95,12 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" \
             | bash -s "${{ github.event.inputs.SUKISU_BRANCH }}"
 
-          # CRITICAL: Replace symlink with real copy
+          # Replace symlink with real copy
           if [ -L "drivers/kernelsu" ]; then
-            echo ">>> Replacing symlink with real copy..."
             REAL=$(readlink -f "drivers/kernelsu")
             rm "drivers/kernelsu"
             cp -a "$REAL" "drivers/kernelsu"
           fi
-
           echo "KSU_DIR=drivers/kernelsu" >> $GITHUB_ENV
 
       - name: Integrate SUSFS
@@ -133,9 +131,6 @@ jobs:
               { git apply --reject "$p" 2>/dev/null || true; }
           done
 
-          [ -f "include/linux/susfs.h" ] && echo "✅ susfs.h" || echo "❌ susfs.h"
-          [ -f "fs/susfs.c" ] && echo "✅ susfs.c" || echo "❌ susfs.c"
-
       - name: Patch ksu.c + dispatch.c for SUSFS compat
         if: ${{ github.event.inputs.ENABLE_SUSFS == 'true' }}
         working-directory: ${{ env.KERNEL_DIR }}
@@ -148,58 +143,58 @@ jobs:
 
           TMPFILE=$(mktemp)
           cat > "$TMPFILE" << 'COMPAT_EOF'
-          /* === SUSFS/KSU COMPAT BLOCK v15 === */
-          #include <linux/types.h>
-          #include <linux/string.h>
-          #include <linux/errno.h>
-          
-          #ifndef SUSFS_MAGIC
-          #define SUSFS_MAGIC 0x535553
-          #endif
-          #ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
-          #define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
-          #endif
-          #ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
-          #define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
-          #endif
-          #ifndef CMD_SUSFS_ADD_SUS_MAP
-          #define CMD_SUSFS_ADD_SUS_MAP 0x60030
-          #endif
-          #ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
-          #define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
-          #endif
-          
-          #ifndef strncpy_from_user_nofault
-          #define strncpy_from_user_nofault __strncpy_from_user_nofault
-          #endif
-          
-          #ifdef CONFIG_KSU_SUSFS
-          __attribute__((weak)) int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
-          __attribute__((weak)) int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }
-          __attribute__((weak)) void susfs_start_sdcard_monitor_fn(void) { }
-          __attribute__((weak)) int susfs_add_sus_map(void *a) { return -ENOSYS; }
-          __attribute__((weak)) int susfs_set_avc_log_spoofing(void *a) { return 0; }
-          __attribute__((weak)) int susfs_enable_log(void *a) { return 0; }
-          __attribute__((weak)) int susfs_show_variant(void *a) { return 0; }
-          __attribute__((weak)) int susfs_show_version(void *a) { return 0; }
-          __attribute__((weak)) bool susfs_starts_with(const char *s, const char *p) {
-              return s && p && strncmp(s, p, strlen(p)) == 0;
-          }
-          __attribute__((weak)) bool susfs_ends_with(const char *s, const char *x) {
-              size_t sl, xl;
-              if (!s || !x) return false;
-              sl = strlen(s); xl = strlen(x);
-              return xl <= sl && strcmp(s + sl - xl, x) == 0;
-          }
-          __attribute__((weak)) bool susfs_is_current_proc_umounted(void) { return false; }
-          __attribute__((weak)) void susfs_set_current_proc_umounted(void) { }
-          #endif
-          __attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }
-          __attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }
-          
-          /* === END COMPAT BLOCK === */
-          
-          COMPAT_EOF
+/* === SUSFS/KSU COMPAT BLOCK v16 === */
+#include <linux/types.h>
+#include <linux/string.h>
+#include <linux/errno.h>
+
+#ifndef SUSFS_MAGIC
+#define SUSFS_MAGIC 0x535553
+#endif
+#ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
+#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
+#endif
+#ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
+#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
+#endif
+#ifndef CMD_SUSFS_ADD_SUS_MAP
+#define CMD_SUSFS_ADD_SUS_MAP 0x60030
+#endif
+#ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
+#define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
+#endif
+
+#ifndef strncpy_from_user_nofault
+#define strncpy_from_user_nofault __strncpy_from_user_nofault
+#endif
+
+#ifdef CONFIG_KSU_SUSFS
+__attribute__((weak)) int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
+__attribute__((weak)) int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }
+__attribute__((weak)) void susfs_start_sdcard_monitor_fn(void) { }
+__attribute__((weak)) int susfs_add_sus_map(void *a) { return -ENOSYS; }
+__attribute__((weak)) int susfs_set_avc_log_spoofing(void *a) { return 0; }
+__attribute__((weak)) int susfs_enable_log(void *a) { return 0; }
+__attribute__((weak)) int susfs_show_variant(void *a) { return 0; }
+__attribute__((weak)) int susfs_show_version(void *a) { return 0; }
+__attribute__((weak)) bool susfs_starts_with(const char *s, const char *p) {
+    return s && p && strncmp(s, p, strlen(p)) == 0;
+}
+__attribute__((weak)) bool susfs_ends_with(const char *s, const char *x) {
+    size_t sl, xl;
+    if (!s || !x) return false;
+    sl = strlen(s); xl = strlen(x);
+    return xl <= sl && strcmp(s + sl - xl, x) == 0;
+}
+__attribute__((weak)) bool susfs_is_current_proc_umounted(void) { return false; }
+__attribute__((weak)) void susfs_set_current_proc_umounted(void) { }
+#endif
+__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }
+__attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }
+
+/* === END COMPAT BLOCK === */
+
+COMPAT_EOF
 
           cat "$TMPFILE" "$KSU_C" > "${KSU_C}.new"
           mv "${KSU_C}.new" "$KSU_C"
@@ -284,96 +279,110 @@ jobs:
           fi
 
       # ═══════════════════════════════════════════════════
-      #  FORCE KBUILD LINKAGE — unconditional obj-y
-      #  This is the CRITICAL fix for linker errors
+      #  NUCLEAR FIX: Force ALL Makefiles to obj-y
+      #  AND patch build.sh to inject .config after defconfig
       # ═══════════════════════════════════════════════════
-      - name: Force Kbuild linkage (obj-y)
+      - name: Force Kbuild linkage (v16 nuclear)
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           set -e
           echo "============================================"
-          echo "  Force Kbuild linkage v15"
+          echo "  Force Kbuild linkage v16 (nuclear)"
           echo "============================================"
 
-          # ── 1. FORCE drivers/Makefile: obj-y += kernelsu/ ──
-          DRIVERS_MK="drivers/Makefile"
-          echo ">>> Before (drivers/Makefile kernelsu lines):"
-          grep -n "kernelsu" "$DRIVERS_MK" 2>/dev/null || echo "  (none)"
+          # ── 1. drivers/Makefile: force obj-y ──
+          sed -i '/kernelsu/d' drivers/Makefile
+          echo "obj-y += kernelsu/" >> drivers/Makefile
+          echo "✅ drivers/Makefile: obj-y += kernelsu/"
 
-          # Remove ALL existing kernelsu lines (conditional or not)
-          sed -i '/kernelsu/d' "$DRIVERS_MK"
-          # Add UNCONDITIONAL obj-y
-          echo "" >> "$DRIVERS_MK"
-          echo "# KernelSU — forced obj-y for reliable linking" >> "$DRIVERS_MK"
-          echo "obj-y += kernelsu/" >> "$DRIVERS_MK"
-          echo "    ✅ drivers/Makefile: obj-y += kernelsu/"
-
-          echo ">>> After:"
-          grep -n "kernelsu" "$DRIVERS_MK"
-
-          # ── 2. FORCE fs/Makefile: obj-y += susfs.o ──
-          FS_MK="fs/Makefile"
-          if [ -f "fs/susfs.c" ]; then
-            echo ">>> Before (fs/Makefile susfs lines):"
-            grep -n "susfs" "$FS_MK" 2>/dev/null || echo "  (none)"
-
-            sed -i '/susfs/d' "$FS_MK"
-            echo "" >> "$FS_MK"
-            echo "# SUSFS — forced obj-y for reliable linking" >> "$FS_MK"
-            echo "obj-y += susfs.o" >> "$FS_MK"
-            echo "    ✅ fs/Makefile: obj-y += susfs.o"
-
-            echo ">>> After:"
-            grep -n "susfs" "$FS_MK"
-          fi
-
-          # ── 3. FORCE KSU Makefile: ensure ksu.o is built ──
+          # ── 2. drivers/kernelsu/Makefile: force ALL obj-y ──
           KSU_MK="drivers/kernelsu/Makefile"
           if [ -f "$KSU_MK" ]; then
-            echo ""
-            echo ">>> KSU Makefile:"
+            echo ">>> BEFORE KSU Makefile:"
             cat "$KSU_MK"
             echo ""
 
-            # Check if it uses kernelsu-objs or obj-y pattern
-            if grep -q "kernelsu-objs\|kernelsu-y" "$KSU_MK"; then
-              echo "    ✅ KSU Makefile uses module-style build"
-            elif grep -q "obj-" "$KSU_MK"; then
-              echo "    ✅ KSU Makefile uses obj-y style build"
+            # Replace ALL obj-$(CONFIG_KSU) with obj-y
+            sed -i 's/obj-\$(CONFIG_KSU)/obj-y/g' "$KSU_MK"
+            # Replace ALL ccflags conditionals too
+            sed -i 's/subdir-ccflags-\$(CONFIG_KSU)/subdir-ccflags-y/g' "$KSU_MK"
+
+            echo ">>> AFTER KSU Makefile:"
+            cat "$KSU_MK"
+            echo ""
+            echo "✅ KSU Makefile: all CONFIG_KSU → y"
+          fi
+
+          # ── 3. fs/Makefile: force susfs obj-y ──
+          if [ -f "fs/susfs.c" ]; then
+            sed -i '/susfs/d' fs/Makefile
+            echo "obj-y += susfs.o" >> fs/Makefile
+            echo "✅ fs/Makefile: obj-y += susfs.o"
+          fi
+
+          # ── 4. Kconfig chain ──
+          if [ -f "drivers/Kconfig" ] && ! grep -q "kernelsu" "drivers/Kconfig"; then
+            ENDMENU=$(grep -n "^endmenu" "drivers/Kconfig" | tail -1 | cut -d: -f1)
+            if [ -n "$ENDMENU" ]; then
+              sed -i "${ENDMENU}i\\source \"drivers/kernelsu/Kconfig\"" "drivers/Kconfig"
             else
-              echo "    ⚠️ KSU Makefile has no obj entries — adding"
-              echo 'obj-y += ksu.o' >> "$KSU_MK"
+              echo 'source "drivers/kernelsu/Kconfig"' >> "drivers/Kconfig"
             fi
+            echo "✅ drivers/Kconfig updated"
+          fi
+
+          # ── 5. Patch build.sh to inject CONFIG into .config ──
+          # Many build.sh do: make O=out <defconfig>, then make O=out
+          # We patch build.sh to add config injection after defconfig
+          echo ">>> Patching build.sh to inject CONFIG_KSU into .config..."
+
+          # Find the defconfig make line and add config injection after it
+          if grep -q "make.*defconfig\|make.*_defconfig" build.sh; then
+            # Add a config injection command after any defconfig line
+            sed -i '/make.*defconfig\|make.*_defconfig/a \
+# v16: Force CONFIG_KSU=y in .config after defconfig\
+for cfg in out/.config .config; do\
+  if [ -f "$cfg" ]; then\
+    sed -i '"'"'/CONFIG_KSU/d; /CONFIG_KSU_SUSFS/d'"'"' "$cfg"\
+    echo "CONFIG_KSU=y" >> "$cfg"\
+    echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$cfg"\
+    echo "CONFIG_KSU_SUSFS=y" >> "$cfg"\
+    echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$cfg"\
+    echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$cfg"\
+    echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$cfg"\
+    echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y" >> "$cfg"\
+    echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$cfg"\
+    echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$cfg"\
+    echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$cfg"\
+    echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$cfg"\
+    echo "CONFIG_KALLSYMS=y" >> "$cfg"\
+    echo "CONFIG_KALLSYMS_ALL=y" >> "$cfg"\
+    echo "[v16] Injected CONFIG_KSU=y into $cfg"\
+  fi\
+done' build.sh
+            echo "✅ build.sh patched to inject configs after defconfig"
           else
-            echo "    ⚠️ KSU Makefile not found — creating"
-            echo 'obj-y += ksu.o' > "$KSU_MK"
+            echo "⚠️ No defconfig line found in build.sh — trying alternative"
+            # Alternative: create a wrapper that runs build.sh then patches
           fi
 
-          # ── 4. Ensure Kconfig chain ──
-          if [ -f "drivers/Kconfig" ]; then
-            if ! grep -q "kernelsu" "drivers/Kconfig"; then
-              # Add source before endmenu
-              ENDMENU=$(grep -n "^endmenu" "drivers/Kconfig" | tail -1 | cut -d: -f1)
-              if [ -n "$ENDMENU" ]; then
-                sed -i "${ENDMENU}i\\source \"drivers/kernelsu/Kconfig\"" "drivers/Kconfig"
-              else
-                echo 'source "drivers/kernelsu/Kconfig"' >> "drivers/Kconfig"
-              fi
-              echo "    ✅ Added kernelsu/Kconfig to drivers/Kconfig"
-            fi
-          fi
+          # ── 6. Also create a .config override in common locations ──
+          for dir in out .config_out; do
+            mkdir -p "$dir" 2>/dev/null || true
+          done
 
-          # ── 5. Debug: verify file existence ──
+          # ── 7. Verify ──
           echo ""
-          echo ">>> Verify critical files:"
-          [ -f "drivers/kernelsu/ksu.c" ] && echo "    ✅ ksu.c" || echo "    ❌ ksu.c"
-          [ -f "drivers/kernelsu/Makefile" ] && echo "    ✅ KSU Makefile" || echo "    ❌ KSU Makefile"
-          [ -f "drivers/kernelsu/Kconfig" ] && echo "    ✅ KSU Kconfig" || echo "    ❌ KSU Kconfig"
-          [ -f "fs/susfs.c" ] && echo "    ✅ fs/susfs.c" || echo "    ❌ fs/susfs.c"
-          [ -L "drivers/kernelsu" ] && echo "    ⚠️ STILL A SYMLINK!" || echo "    ✅ Real directory"
-
+          echo ">>> Final verification:"
+          echo "  drivers/Makefile (kernelsu):"
+          grep "kernelsu" drivers/Makefile
+          echo "  KSU Makefile obj lines:"
+          grep "^obj-" "$KSU_MK" 2>/dev/null || echo "  (none)"
+          echo "  fs/Makefile (susfs):"
+          grep "susfs" fs/Makefile 2>/dev/null || echo "  (none)"
+          echo "  build.sh CONFIG_KSU injection:"
+          grep -c "v16.*CONFIG_KSU" build.sh || echo "  (not injected)"
           echo ""
-          echo "============================================"
 
       - name: Build kernel via build.sh
         working-directory: ${{ env.KERNEL_DIR }}
