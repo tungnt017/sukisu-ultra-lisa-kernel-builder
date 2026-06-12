@@ -139,58 +139,58 @@ jobs:
 
           TMPFILE=$(mktemp)
           cat > "$TMPFILE" << 'COMPAT_EOF'
-/* === SUSFS/KSU COMPAT BLOCK v19b === */
-#include <linux/types.h>
-#include <linux/string.h>
-#include <linux/errno.h>
+          /* === SUSFS/KSU COMPAT BLOCK v19b === */
+          #include <linux/types.h>
+          #include <linux/string.h>
+          #include <linux/errno.h>
 
-#ifndef SUSFS_MAGIC
-#define SUSFS_MAGIC 0x535553
-#endif
-#ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
-#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
-#endif
-#ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
-#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
-#endif
-#ifndef CMD_SUSFS_ADD_SUS_MAP
-#define CMD_SUSFS_ADD_SUS_MAP 0x60030
-#endif
-#ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
-#define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
-#endif
+          #ifndef SUSFS_MAGIC
+          #define SUSFS_MAGIC 0x535553
+          #endif
+          #ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
+          #define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
+          #endif
+          #ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
+          #define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
+          #endif
+          #ifndef CMD_SUSFS_ADD_SUS_MAP
+          #define CMD_SUSFS_ADD_SUS_MAP 0x60030
+          #endif
+          #ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
+          #define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
+          #endif
 
-#ifndef strncpy_from_user_nofault
-#define strncpy_from_user_nofault __strncpy_from_user_nofault
-#endif
+          #ifndef strncpy_from_user_nofault
+          #define strncpy_from_user_nofault __strncpy_from_user_nofault
+          #endif
 
-#ifdef CONFIG_KSU_SUSFS
-__attribute__((weak)) int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
-__attribute__((weak)) int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }
-__attribute__((weak)) void susfs_start_sdcard_monitor_fn(void) { }
-__attribute__((weak)) int susfs_add_sus_map(void *a) { return -ENOSYS; }
-__attribute__((weak)) int susfs_set_avc_log_spoofing(void *a) { return 0; }
-__attribute__((weak)) int susfs_enable_log(void *a) { return 0; }
-__attribute__((weak)) int susfs_show_variant(void *a) { return 0; }
-__attribute__((weak)) int susfs_show_version(void *a) { return 0; }
-__attribute__((weak)) bool susfs_starts_with(const char *s, const char *p) {
-    return s && p && strncmp(s, p, strlen(p)) == 0;
-}
-__attribute__((weak)) bool susfs_ends_with(const char *s, const char *x) {
-    size_t sl, xl;
-    if (!s || !x) return false;
-    sl = strlen(s); xl = strlen(x);
-    return xl <= sl && strcmp(s + sl - xl, x) == 0;
-}
-__attribute__((weak)) bool susfs_is_current_proc_umounted(void) { return false; }
-__attribute__((weak)) void susfs_set_current_proc_umounted(void) { }
-#endif
-__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }
-__attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }
+          #ifdef CONFIG_KSU_SUSFS
+          __attribute__((weak)) int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
+          __attribute__((weak)) int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }
+          __attribute__((weak)) void susfs_start_sdcard_monitor_fn(void) { }
+          __attribute__((weak)) int susfs_add_sus_map(void *a) { return -ENOSYS; }
+          __attribute__((weak)) int susfs_set_avc_log_spoofing(void *a) { return 0; }
+          __attribute__((weak)) int susfs_enable_log(void *a) { return 0; }
+          __attribute__((weak)) int susfs_show_variant(void *a) { return 0; }
+          __attribute__((weak)) int susfs_show_version(void *a) { return 0; }
+          __attribute__((weak)) bool susfs_starts_with(const char *s, const char *p) {
+              return s && p && strncmp(s, p, strlen(p)) == 0;
+          }
+          __attribute__((weak)) bool susfs_ends_with(const char *s, const char *x) {
+              size_t sl, xl;
+              if (!s || !x) return false;
+              sl = strlen(s); xl = strlen(x);
+              return xl <= sl && strcmp(s + sl - xl, x) == 0;
+          }
+          __attribute__((weak)) bool susfs_is_current_proc_umounted(void) { return false; }
+          __attribute__((weak)) void susfs_set_current_proc_umounted(void) { }
+          #endif
+          __attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }
+          __attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }
 
-/* === END COMPAT BLOCK === */
+          /* === END COMPAT BLOCK === */
 
-COMPAT_EOF
+          COMPAT_EOF
 
           cat "$TMPFILE" "$KSU_C" > "${KSU_C}.new"
           mv "${KSU_C}.new" "$KSU_C"
@@ -253,39 +253,39 @@ COMPAT_EOF
           echo "============================================"
 
           cat > init/ksu_stubs.c << 'STUBS_EOF'
-// SPDX-License-Identifier: GPL-2.0
-/*
- * KSU/SUSFS weak link stubs (v19b)
- *
- * Provides weak definitions for symbols referenced by manual hook patches.
- * SukiSU-Ultra uses SUSFS_INLINE_HOOK mode which doesn't export these
- * as traditional globals. The weak attribute lets the linker resolve
- * references; if KSU provides strong definitions, they override these.
- */
+          // SPDX-License-Identifier: GPL-2.0
+          /*
+           * KSU/SUSFS weak link stubs (v19b)
+           *
+           * Provides weak definitions for symbols referenced by manual hook patches.
+           * SukiSU-Ultra uses SUSFS_INLINE_HOOK mode which doesn't export these
+           * as traditional globals. The weak attribute lets the linker resolve
+           * references; if KSU provides strong definitions, they override these.
+           */
 
-#include <linux/types.h>
+          #include <linux/types.h>
 
-struct inode;
+          struct inode;
 
-/* Bool hook variables — referenced by apply_hooks.sh patches.
- * NOTE: cannot combine __attribute__((weak)) with __read_mostly
- *       on the same declaration (Clang syntax error), so we omit
- *       __read_mostly here. The real KSU definitions use it. */
-bool __attribute__((weak)) ksu_execveat_hook;
-bool __attribute__((weak)) ksu_vfs_read_hook;
-bool __attribute__((weak)) ksu_input_hook;
+          /* Bool hook variables — referenced by apply_hooks.sh patches.
+           * NOTE: cannot combine __attribute__((weak)) with __read_mostly
+           *       on the same declaration (Clang syntax error), so we omit
+           *       __read_mostly here. The real KSU definitions use it. */
+          bool __attribute__((weak)) ksu_execveat_hook;
+          bool __attribute__((weak)) ksu_vfs_read_hook;
+          bool __attribute__((weak)) ksu_input_hook;
 
-/* fs/devpts/inode.c: extern int ksu_handle_devpts(struct inode*) */
-int __attribute__((weak)) ksu_handle_devpts(struct inode *inode)
-{
-	return 0;
-}
+          /* fs/devpts/inode.c: extern int ksu_handle_devpts(struct inode*) */
+          int __attribute__((weak)) ksu_handle_devpts(struct inode *inode)
+          {
+          	return 0;
+          }
 
-/* Referenced from KSU SUSFS hook code (ksu_handle_setresuid etc.) */
-void __attribute__((weak)) susfs_extra_works(void)
-{
-}
-STUBS_EOF
+          /* Referenced from KSU SUSFS hook code (ksu_handle_setresuid etc.) */
+          void __attribute__((weak)) susfs_extra_works(void)
+          {
+          }
+          STUBS_EOF
 
           echo "  ✅ Created init/ksu_stubs.c"
 
