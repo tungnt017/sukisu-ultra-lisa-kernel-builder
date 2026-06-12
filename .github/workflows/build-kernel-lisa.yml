@@ -28,7 +28,7 @@ on:
         required: true
         default: "https://github.com/ZyCromerZ/Clang/releases/download/21.0.0-20250517-release/Clang-21.0.0-20250517.tar.gz"
       BUILD_ARGS:
-        description: "Extra build.sh arguments"
+        description: "Extra make arguments"
         required: false
         default: ""
       ENABLE_KPM:
@@ -94,8 +94,6 @@ jobs:
         run: |
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" \
             | bash -s "${{ github.event.inputs.SUKISU_BRANCH }}"
-
-          # Replace symlink with real copy
           if [ -L "drivers/kernelsu" ]; then
             REAL=$(readlink -f "drivers/kernelsu")
             rm "drivers/kernelsu"
@@ -138,68 +136,65 @@ jobs:
           set -e
           KSU_C="drivers/kernelsu/ksu.c"
           DISPATCH="drivers/kernelsu/supercall/dispatch.c"
-          [ -f "$KSU_C" ] || { echo "::error::ksu.c not found!"; exit 1; }
-          [ -f "$DISPATCH" ] || { echo "::error::dispatch.c not found!"; exit 1; }
 
           TMPFILE=$(mktemp)
           cat > "$TMPFILE" << 'COMPAT_EOF'
-          /* === SUSFS/KSU COMPAT BLOCK v17 === */
-          #include <linux/types.h>
-          #include <linux/string.h>
-          #include <linux/errno.h>
-          
-          #ifndef SUSFS_MAGIC
-          #define SUSFS_MAGIC 0x535553
-          #endif
-          #ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
-          #define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
-          #endif
-          #ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
-          #define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
-          #endif
-          #ifndef CMD_SUSFS_ADD_SUS_MAP
-          #define CMD_SUSFS_ADD_SUS_MAP 0x60030
-          #endif
-          #ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
-          #define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
-          #endif
-          
-          #ifndef strncpy_from_user_nofault
-          #define strncpy_from_user_nofault __strncpy_from_user_nofault
-          #endif
-          
-          #ifdef CONFIG_KSU_SUSFS
-          __attribute__((weak)) int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
-          __attribute__((weak)) int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }
-          __attribute__((weak)) void susfs_start_sdcard_monitor_fn(void) { }
-          __attribute__((weak)) int susfs_add_sus_map(void *a) { return -ENOSYS; }
-          __attribute__((weak)) int susfs_set_avc_log_spoofing(void *a) { return 0; }
-          __attribute__((weak)) int susfs_enable_log(void *a) { return 0; }
-          __attribute__((weak)) int susfs_show_variant(void *a) { return 0; }
-          __attribute__((weak)) int susfs_show_version(void *a) { return 0; }
-          __attribute__((weak)) bool susfs_starts_with(const char *s, const char *p) {
-              return s && p && strncmp(s, p, strlen(p)) == 0;
-          }
-          __attribute__((weak)) bool susfs_ends_with(const char *s, const char *x) {
-              size_t sl, xl;
-              if (!s || !x) return false;
-              sl = strlen(s); xl = strlen(x);
-              return xl <= sl && strcmp(s + sl - xl, x) == 0;
-          }
-          __attribute__((weak)) bool susfs_is_current_proc_umounted(void) { return false; }
-          __attribute__((weak)) void susfs_set_current_proc_umounted(void) { }
-          #endif
-          __attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }
-          __attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }
-          
-          /* === END COMPAT BLOCK === */
-          
-          COMPAT_EOF
+/* === SUSFS/KSU COMPAT BLOCK v18 === */
+#include <linux/types.h>
+#include <linux/string.h>
+#include <linux/errno.h>
+
+#ifndef SUSFS_MAGIC
+#define SUSFS_MAGIC 0x535553
+#endif
+#ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
+#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
+#endif
+#ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
+#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
+#endif
+#ifndef CMD_SUSFS_ADD_SUS_MAP
+#define CMD_SUSFS_ADD_SUS_MAP 0x60030
+#endif
+#ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
+#define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
+#endif
+
+#ifndef strncpy_from_user_nofault
+#define strncpy_from_user_nofault __strncpy_from_user_nofault
+#endif
+
+#ifdef CONFIG_KSU_SUSFS
+__attribute__((weak)) int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
+__attribute__((weak)) int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }
+__attribute__((weak)) void susfs_start_sdcard_monitor_fn(void) { }
+__attribute__((weak)) int susfs_add_sus_map(void *a) { return -ENOSYS; }
+__attribute__((weak)) int susfs_set_avc_log_spoofing(void *a) { return 0; }
+__attribute__((weak)) int susfs_enable_log(void *a) { return 0; }
+__attribute__((weak)) int susfs_show_variant(void *a) { return 0; }
+__attribute__((weak)) int susfs_show_version(void *a) { return 0; }
+__attribute__((weak)) bool susfs_starts_with(const char *s, const char *p) {
+    return s && p && strncmp(s, p, strlen(p)) == 0;
+}
+__attribute__((weak)) bool susfs_ends_with(const char *s, const char *x) {
+    size_t sl, xl;
+    if (!s || !x) return false;
+    sl = strlen(s); xl = strlen(x);
+    return xl <= sl && strcmp(s + sl - xl, x) == 0;
+}
+__attribute__((weak)) bool susfs_is_current_proc_umounted(void) { return false; }
+__attribute__((weak)) void susfs_set_current_proc_umounted(void) { }
+#endif
+__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }
+__attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }
+
+/* === END COMPAT BLOCK === */
+
+COMPAT_EOF
 
           cat "$TMPFILE" "$KSU_C" > "${KSU_C}.new"
           mv "${KSU_C}.new" "$KSU_C"
           rm -f "$TMPFILE"
-          echo "✅ Compat block prepended to ksu.c"
 
           sed -i 's/susfs_add_sus_path(arg)/susfs_add_sus_path((struct st_susfs_sus_path __user *)arg)/g' "$DISPATCH"
           sed -i 's/susfs_add_sus_kstat(arg)/susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)arg)/g' "$DISPATCH"
@@ -209,7 +204,6 @@ jobs:
           sed -i 's/susfs_add_open_redirect(arg)/susfs_add_open_redirect((struct st_susfs_open_redirect __user *)arg)/g' "$DISPATCH"
           sed -i 's/susfs_set_cmdline_or_bootconfig(arg)/susfs_set_cmdline_or_bootconfig((char __user *)arg)/g' "$DISPATCH"
           sed -i 's/susfs_get_enabled_features(arg)/susfs_get_enabled_features((char __user *)arg, 4096)/g' "$DISPATCH"
-          echo "✅ dispatch.c casts fixed"
 
       - name: Handle SUSFS disabled
         if: ${{ github.event.inputs.ENABLE_SUSFS != 'true' }}
@@ -247,9 +241,38 @@ jobs:
           [ -f "$USB_MK" ] && ! grep -q "Wno-single-bit-bitfield" "$USB_MK" && \
             echo -e "\nCFLAGS_usbdtp.o += -Wno-single-bit-bitfield-constant-conversion" >> "$USB_MK"
 
-      - name: Update defconfig
+      # ═══════════════════════════════════════════════════
+      #  v18: Force Makefiles + Direct make (bypass build.sh)
+      # ═══════════════════════════════════════════════════
+      - name: Setup Makefiles and defconfig
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
+          set -e
+
+          # Force drivers/Makefile
+          sed -i '/kernelsu/d' drivers/Makefile
+          echo "obj-y += kernelsu/" >> drivers/Makefile
+
+          # Force KSU internal Makefile
+          KSU_MK="drivers/kernelsu/Makefile"
+          [ -f "$KSU_MK" ] && {
+            sed -i 's/obj-\$(CONFIG_KSU)/obj-y/g' "$KSU_MK"
+            sed -i 's/subdir-ccflags-\$(CONFIG_KSU)/subdir-ccflags-y/g' "$KSU_MK"
+          }
+
+          # Force fs/Makefile
+          [ -f "fs/susfs.c" ] && {
+            sed -i '/susfs/d' fs/Makefile
+            echo "obj-y += susfs.o" >> fs/Makefile
+          }
+
+          # Kconfig
+          if [ -f "drivers/Kconfig" ] && ! grep -q "kernelsu" "drivers/Kconfig"; then
+            ENDMENU=$(grep -n "^endmenu" "drivers/Kconfig" | tail -1 | cut -d: -f1)
+            [ -n "$ENDMENU" ] && sed -i "${ENDMENU}i\\source \"drivers/kernelsu/Kconfig\"" "drivers/Kconfig"
+          fi
+
+          # Update defconfig
           DC="arch/arm64/configs/${{ github.event.inputs.DEFCONFIG }}"
           sed -i '/CONFIG_KSU/d; /CONFIG_KPROBES/d; /CONFIG_KPM/d; /CONFIG_KALLSYMS_ALL/d' "$DC"
           {
@@ -274,146 +297,108 @@ jobs:
               echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
               echo "# CONFIG_KSU_SUSFS_SUS_SU is not set"
             } >> "$DC"
-          else
-            echo "# CONFIG_KSU_SUSFS is not set" >> "$DC"
           fi
 
-      # ═══════════════════════════════════════════════════
-      #  v17 NUCLEAR: Force Makefiles + pre-generate .config
-      # ═══════════════════════════════════════════════════
-      - name: Force Kbuild linkage + pre-generate config
+      - name: Build kernel (direct make)
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           set -e
-          echo "============================================"
-          echo "  v17: Force Kbuild + Pre-generate .config"
-          echo "============================================"
-
-          # ── 1. Force ALL Makefiles to obj-y ──
-          sed -i '/kernelsu/d' drivers/Makefile
-          echo "obj-y += kernelsu/" >> drivers/Makefile
-
-          KSU_MK="drivers/kernelsu/Makefile"
-          if [ -f "$KSU_MK" ]; then
-            sed -i 's/obj-\$(CONFIG_KSU)/obj-y/g' "$KSU_MK"
-            sed -i 's/subdir-ccflags-\$(CONFIG_KSU)/subdir-ccflags-y/g' "$KSU_MK"
-          fi
-
-          if [ -f "fs/susfs.c" ]; then
-            sed -i '/susfs/d' fs/Makefile
-            echo "obj-y += susfs.o" >> fs/Makefile
-          fi
-
-          # ── 2. Kconfig ──
-          if [ -f "drivers/Kconfig" ] && ! grep -q "kernelsu" "drivers/Kconfig"; then
-            ENDMENU=$(grep -n "^endmenu" "drivers/Kconfig" | tail -1 | cut -d: -f1)
-            if [ -n "$ENDMENU" ]; then
-              sed -i "${ENDMENU}i\\source \"drivers/kernelsu/Kconfig\"" "drivers/Kconfig"
-            fi
-          fi
-
-          # ── 3. Pre-generate .config with CONFIG_KSU=y ──
-          # Run defconfig ourselves FIRST, then inject configs
-          export ARCH=arm64 SUBARCH=arm64
+          export ARCH=arm64
+          export SUBARCH=arm64
           export PATH="$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH"
-          export CC=clang LLVM=1 LLVM_IAS=1
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CLANG_TRIPLE=aarch64-linux-gnu-
 
-          echo ">>> Running defconfig..."
-          make O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
-            CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- \
-            ${{ github.event.inputs.DEFCONFIG }} 2>&1 | tail -5
+          MAKE_ARGS="O=out \
+            ARCH=arm64 \
+            CC=clang \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CLANG_TRIPLE=aarch64-linux-gnu-"
 
-          # ── 4. Inject CONFIG_KSU into generated .config ──
+          echo "============================================"
+          echo "  v18: Direct make build"
+          echo "============================================"
+
+          # Step 1: defconfig
+          echo ">>> Step 1: defconfig"
+          make $MAKE_ARGS ${{ github.event.inputs.DEFCONFIG }} 2>&1 | tail -5
+
+          # Step 2: Inject CONFIG_KSU into .config
+          echo ">>> Step 2: Inject CONFIG_KSU"
           CFG="out/.config"
-          if [ -f "$CFG" ]; then
-            echo ">>> Injecting CONFIG_KSU into $CFG..."
-            sed -i '/CONFIG_KSU/d' "$CFG"
-            sed -i '/CONFIG_KPM/d' "$CFG"
-            {
-              echo ""
-              echo "CONFIG_KSU=y"
-              echo "CONFIG_KSU_MANUAL_HOOK=y"
-              echo "CONFIG_KSU_SUSFS=y"
-              echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
-              echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
-              echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
-              echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y"
-              echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
-              echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
-              echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
-              echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
-              echo "CONFIG_KALLSYMS=y"
-              echo "CONFIG_KALLSYMS_ALL=y"
-            } >> "$CFG"
-            [ "${{ github.event.inputs.ENABLE_KPM }}" = "true" ] && echo "CONFIG_KPM=y" >> "$CFG"
-            echo "✅ CONFIG_KSU=y injected into .config"
+          sed -i '/CONFIG_KSU/d; /CONFIG_KPM/d' "$CFG"
+          {
+            echo "CONFIG_KSU=y"
+            echo "CONFIG_KSU_MANUAL_HOOK=y"
+            echo "CONFIG_KSU_SUSFS=y"
+            echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
+            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y"
+            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+            echo "CONFIG_KALLSYMS=y"
+            echo "CONFIG_KALLSYMS_ALL=y"
+          } >> "$CFG"
+          [ "${{ github.event.inputs.ENABLE_KPM }}" = "true" ] && echo "CONFIG_KPM=y" >> "$CFG"
 
-            # Run olddefconfig to validate
-            echo ">>> Running olddefconfig..."
-            make O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
-              CROSS_COMPILE=aarch64-linux-gnu- CLANG_TRIPLE=aarch64-linux-gnu- \
-              olddefconfig 2>&1 | tail -5
+          # Step 3: olddefconfig (validate)
+          echo ">>> Step 3: olddefconfig"
+          make $MAKE_ARGS olddefconfig 2>&1 | tail -5
 
-            # ── 5. VERIFY CONFIG_KSU survived olddefconfig ──
-            echo ">>> .config verification:"
-            grep "CONFIG_KSU" "$CFG" || echo "  ❌ CONFIG_KSU NOT FOUND!"
-            grep "CONFIG_KSU_SUSFS" "$CFG" || echo "  ❌ CONFIG_KSU_SUSFS NOT FOUND!"
-
-            # If olddefconfig stripped CONFIG_KSU, force it back
-            if ! grep -q "^CONFIG_KSU=y" "$CFG"; then
-              echo ">>> ⚠️ CONFIG_KSU stripped by olddefconfig — re-injecting..."
-              echo "CONFIG_KSU=y" >> "$CFG"
-              echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$CFG"
-              echo "CONFIG_KSU_SUSFS=y" >> "$CFG"
-            fi
+          # Step 4: Re-inject if stripped
+          if ! grep -q "^CONFIG_KSU=y" "$CFG"; then
+            echo ">>> CONFIG_KSU was stripped! Re-injecting..."
+            echo "CONFIG_KSU=y" >> "$CFG"
+            echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$CFG"
+            echo "CONFIG_KSU_SUSFS=y" >> "$CFG"
           fi
 
-          echo ""
-          echo ">>> KSU Makefile (final):"
-          cat "$KSU_MK"
-          echo ""
-          echo ">>> drivers/Makefile kernelsu:"
-          grep "kernelsu" drivers/Makefile
-          echo ">>> fs/Makefile susfs:"
-          grep "susfs" fs/Makefile || echo "(none)"
-          echo ""
+          # Step 5: Verify .config
+          echo ">>> Step 5: Verify .config"
+          grep "CONFIG_KSU" "$CFG"
 
-      - name: Build kernel via build.sh
-        working-directory: ${{ env.KERNEL_DIR }}
-        run: |
-          chmod +x build.sh
-          export ARCH=arm64 SUBARCH=arm64
-          export CLANG_PATH="$GITHUB_WORKSPACE/toolchain/clang/bin"
-          export PATH="$CLANG_PATH:$PATH"
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CC=clang LLVM=1 LLVM_IAS=1
-          export DEFCONFIG="${{ github.event.inputs.DEFCONFIG }}"
-          export KERNEL_DEFCONFIG="${{ github.event.inputs.DEFCONFIG }}"
-          export TOOLCHAIN="$GITHUB_WORKSPACE/toolchain/clang"
-          export CLANG_DIR="$GITHUB_WORKSPACE/toolchain/clang"
-          export TC_DIR="$GITHUB_WORKSPACE/toolchain/clang"
+          # Step 6: Check ksu.o symbols presence in object file list
+          echo ""
+          echo ">>> Step 6: Verify Makefiles"
+          echo "  drivers/Makefile:"
+          grep "kernelsu" drivers/Makefile
+          echo "  KSU Makefile:"
+          grep "^obj-" drivers/kernelsu/Makefile || echo "  (no obj lines?)"
+          echo "  fs/Makefile:"
+          grep "susfs" fs/Makefile
+
+          # Step 7: BUILD!
+          echo ""
+          echo ">>> Step 7: Building kernel..."
           BUILD_START=$(date +%s)
-          bash build.sh ${{ github.event.inputs.BUILD_ARGS }} 2>&1 | tee $GITHUB_WORKSPACE/build.log
+          make $MAKE_ARGS -j$(nproc) ${{ github.event.inputs.BUILD_ARGS }} 2>&1 | tee $GITHUB_WORKSPACE/build.log
           BUILD_RC=${PIPESTATUS[0]}
           echo ">>> Build: $(( ($(date +%s)-BUILD_START)/60 ))m (exit: $BUILD_RC)"
 
-          # Debug on failure: check if .o files exist
           if [ $BUILD_RC -ne 0 ]; then
             echo ""
-            echo ">>> DEBUG: Checking .o files..."
-            find out/ -name "ksu.o" 2>/dev/null | head -5
-            find out/ -name "susfs.o" 2>/dev/null | head -5
-            echo ">>> .config CONFIG_KSU:"
-            grep "CONFIG_KSU" out/.config 2>/dev/null || echo "  NOT FOUND"
-            echo ">>> KSU Makefile:"
-            cat drivers/kernelsu/Makefile 2>/dev/null || echo "  NOT FOUND"
-            echo ">>> drivers/Makefile (kernelsu):"
-            grep "kernelsu" drivers/Makefile 2>/dev/null || echo "  NOT FOUND"
-            echo ">>> fs/Makefile (susfs):"
-            grep "susfs" fs/Makefile 2>/dev/null || echo "  NOT FOUND"
+            echo ">>> DEBUG on failure:"
+            echo "  ksu.o:"
+            find out/ -name "ksu.o" 2>/dev/null
+            echo "  susfs.o:"
+            find out/ -name "susfs.o" 2>/dev/null
+            echo "  built-in.a in kernelsu:"
+            find out/ -path "*/kernelsu/built-in.a" 2>/dev/null
+            echo "  built-in.a in drivers:"
+            ls -la out/drivers/built-in.a 2>/dev/null || echo "  NOT FOUND"
+            echo "  nm ksu.o (ksu_execveat_hook):"
+            nm out/drivers/kernelsu/ksu.o 2>/dev/null | grep -i "ksu_execveat_hook" || echo "  NOT FOUND in ksu.o"
+            echo "  nm ksu.o (all ksu_ symbols):"
+            nm out/drivers/kernelsu/ksu.o 2>/dev/null | grep -i "ksu_" | head -20 || echo "  NONE"
+            echo "  nm susfs.o (susfs_extra_works):"
+            nm out/fs/susfs.o 2>/dev/null | grep -i "susfs_extra" || echo "  NOT FOUND in susfs.o"
+            echo "  .config CONFIG_KSU:"
+            grep "CONFIG_KSU" out/.config 2>/dev/null
             echo ""
             echo "::error::Build FAILED!"
             exit $BUILD_RC
