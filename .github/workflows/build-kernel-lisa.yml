@@ -143,58 +143,58 @@ jobs:
 
           TMPFILE=$(mktemp)
           cat > "$TMPFILE" << 'COMPAT_EOF'
-/* === SUSFS/KSU COMPAT BLOCK v16 === */
-#include <linux/types.h>
-#include <linux/string.h>
-#include <linux/errno.h>
-
-#ifndef SUSFS_MAGIC
-#define SUSFS_MAGIC 0x535553
-#endif
-#ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
-#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
-#endif
-#ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
-#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
-#endif
-#ifndef CMD_SUSFS_ADD_SUS_MAP
-#define CMD_SUSFS_ADD_SUS_MAP 0x60030
-#endif
-#ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
-#define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
-#endif
-
-#ifndef strncpy_from_user_nofault
-#define strncpy_from_user_nofault __strncpy_from_user_nofault
-#endif
-
-#ifdef CONFIG_KSU_SUSFS
-__attribute__((weak)) int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
-__attribute__((weak)) int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }
-__attribute__((weak)) void susfs_start_sdcard_monitor_fn(void) { }
-__attribute__((weak)) int susfs_add_sus_map(void *a) { return -ENOSYS; }
-__attribute__((weak)) int susfs_set_avc_log_spoofing(void *a) { return 0; }
-__attribute__((weak)) int susfs_enable_log(void *a) { return 0; }
-__attribute__((weak)) int susfs_show_variant(void *a) { return 0; }
-__attribute__((weak)) int susfs_show_version(void *a) { return 0; }
-__attribute__((weak)) bool susfs_starts_with(const char *s, const char *p) {
-    return s && p && strncmp(s, p, strlen(p)) == 0;
-}
-__attribute__((weak)) bool susfs_ends_with(const char *s, const char *x) {
-    size_t sl, xl;
-    if (!s || !x) return false;
-    sl = strlen(s); xl = strlen(x);
-    return xl <= sl && strcmp(s + sl - xl, x) == 0;
-}
-__attribute__((weak)) bool susfs_is_current_proc_umounted(void) { return false; }
-__attribute__((weak)) void susfs_set_current_proc_umounted(void) { }
-#endif
-__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }
-__attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }
-
-/* === END COMPAT BLOCK === */
-
-COMPAT_EOF
+          /* === SUSFS/KSU COMPAT BLOCK v16 === */
+          #include <linux/types.h>
+          #include <linux/string.h>
+          #include <linux/errno.h>
+          
+          #ifndef SUSFS_MAGIC
+          #define SUSFS_MAGIC 0x535553
+          #endif
+          #ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
+          #define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
+          #endif
+          #ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
+          #define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
+          #endif
+          #ifndef CMD_SUSFS_ADD_SUS_MAP
+          #define CMD_SUSFS_ADD_SUS_MAP 0x60030
+          #endif
+          #ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
+          #define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
+          #endif
+          
+          #ifndef strncpy_from_user_nofault
+          #define strncpy_from_user_nofault __strncpy_from_user_nofault
+          #endif
+          
+          #ifdef CONFIG_KSU_SUSFS
+          __attribute__((weak)) int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
+          __attribute__((weak)) int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }
+          __attribute__((weak)) void susfs_start_sdcard_monitor_fn(void) { }
+          __attribute__((weak)) int susfs_add_sus_map(void *a) { return -ENOSYS; }
+          __attribute__((weak)) int susfs_set_avc_log_spoofing(void *a) { return 0; }
+          __attribute__((weak)) int susfs_enable_log(void *a) { return 0; }
+          __attribute__((weak)) int susfs_show_variant(void *a) { return 0; }
+          __attribute__((weak)) int susfs_show_version(void *a) { return 0; }
+          __attribute__((weak)) bool susfs_starts_with(const char *s, const char *p) {
+              return s && p && strncmp(s, p, strlen(p)) == 0;
+          }
+          __attribute__((weak)) bool susfs_ends_with(const char *s, const char *x) {
+              size_t sl, xl;
+              if (!s || !x) return false;
+              sl = strlen(s); xl = strlen(x);
+              return xl <= sl && strcmp(s + sl - xl, x) == 0;
+          }
+          __attribute__((weak)) bool susfs_is_current_proc_umounted(void) { return false; }
+          __attribute__((weak)) void susfs_set_current_proc_umounted(void) { }
+          #endif
+          __attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }
+          __attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }
+          
+          /* === END COMPAT BLOCK === */
+          
+          COMPAT_EOF
 
           cat "$TMPFILE" "$KSU_C" > "${KSU_C}.new"
           mv "${KSU_C}.new" "$KSU_C"
@@ -340,26 +340,26 @@ COMPAT_EOF
           if grep -q "make.*defconfig\|make.*_defconfig" build.sh; then
             # Add a config injection command after any defconfig line
             sed -i '/make.*defconfig\|make.*_defconfig/a \
-# v16: Force CONFIG_KSU=y in .config after defconfig\
-for cfg in out/.config .config; do\
-  if [ -f "$cfg" ]; then\
-    sed -i '"'"'/CONFIG_KSU/d; /CONFIG_KSU_SUSFS/d'"'"' "$cfg"\
-    echo "CONFIG_KSU=y" >> "$cfg"\
-    echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$cfg"\
-    echo "CONFIG_KSU_SUSFS=y" >> "$cfg"\
-    echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$cfg"\
-    echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$cfg"\
-    echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$cfg"\
-    echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y" >> "$cfg"\
-    echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$cfg"\
-    echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$cfg"\
-    echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$cfg"\
-    echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$cfg"\
-    echo "CONFIG_KALLSYMS=y" >> "$cfg"\
-    echo "CONFIG_KALLSYMS_ALL=y" >> "$cfg"\
-    echo "[v16] Injected CONFIG_KSU=y into $cfg"\
-  fi\
-done' build.sh
+          # v16: Force CONFIG_KSU=y in .config after defconfig\
+          for cfg in out/.config .config; do\
+            if [ -f "$cfg" ]; then\
+              sed -i '"'"'/CONFIG_KSU/d; /CONFIG_KSU_SUSFS/d'"'"' "$cfg"\
+              echo "CONFIG_KSU=y" >> "$cfg"\
+              echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$cfg"\
+              echo "CONFIG_KSU_SUSFS=y" >> "$cfg"\
+              echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$cfg"\
+              echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$cfg"\
+              echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$cfg"\
+              echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y" >> "$cfg"\
+              echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$cfg"\
+              echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$cfg"\
+              echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$cfg"\
+              echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$cfg"\
+              echo "CONFIG_KALLSYMS=y" >> "$cfg"\
+              echo "CONFIG_KALLSYMS_ALL=y" >> "$cfg"\
+              echo "[v16] Injected CONFIG_KSU=y into $cfg"\
+            fi\
+          done' build.sh
             echo "✅ build.sh patched to inject configs after defconfig"
           else
             echo "⚠️ No defconfig line found in build.sh — trying alternative"
