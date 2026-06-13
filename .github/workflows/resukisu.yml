@@ -1,0 +1,383 @@
+name: Build SukiSU-Ultra Kernel (lisa)
+
+on:
+  workflow_dispatch:
+    inputs:
+      KERNEL_REPO:
+        description: "Kernel source repo"
+        required: true
+        default: "https://github.com/AcmeUI-Devices/android_kernel_xiaomi_lisa"
+      KERNEL_BRANCH:
+        description: "Kernel source branch"
+        required: true
+        default: "main"
+      SUKISU_BRANCH:
+        description: "SukiSU-Ultra branch"
+        required: true
+        default: "builtin"
+        type: choice
+        options:
+          - builtin
+          - main
+      DEFCONFIG:
+        description: "Defconfig"
+        required: true
+        default: "vendor/lisa_defconfig"
+      CLANG_URL:
+        description: "Clang toolchain URL"
+        required: true
+        default: "https://github.com/ZyCromerZ/Clang/releases/download/21.0.0-20250517-release/Clang-21.0.0-20250517.tar.gz"
+      BUILD_ARGS:
+        description: "Extra build.sh arguments"
+        required: false
+        default: ""
+      ENABLE_KPM:
+        description: "Enable KPM"
+        required: false
+        default: true
+        type: boolean
+      ENABLE_SUSFS:
+        description: "Enable SUSFS"
+        required: false
+        default: true
+        type: boolean
+      SUSFS_REPO:
+        description: "SUSFS repo"
+        required: false
+        default: "https://github.com/ShirkNeko/susfs4ksu"
+      SUSFS_BRANCH:
+        description: "SUSFS branch"
+        required: false
+        default: "kernel-5.4"
+
+jobs:
+  build:
+    name: Build Kernel
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout builder repo
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ca-certificates cpio curl \
+            flex git gnupg libelf-dev libssl-dev lld llvm \
+            python3 python-is-python3 zip unzip wget \
+            device-tree-compiler gcc-aarch64-linux-gnu
+          sudo ln -sf /usr/bin/python3 /usr/bin/python2 || true
+
+      - name: Setup Clang toolchain
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/toolchain/clang
+          wget -q "${{ github.event.inputs.CLANG_URL }}" -O clang.tar.gz
+          tar -xf clang.tar.gz -C $GITHUB_WORKSPACE/toolchain/clang --strip-components=1
+          rm -f clang.tar.gz
+          echo "$GITHUB_WORKSPACE/toolchain/clang/bin" >> $GITHUB_PATH
+
+      - name: Clone kernel source
+        run: |
+          git clone --depth=1 \
+            -b "${{ github.event.inputs.KERNEL_BRANCH }}" \
+            "${{ github.event.inputs.KERNEL_REPO }}" \
+            $GITHUB_WORKSPACE/kernel
+          echo "KERNEL_DIR=$GITHUB_WORKSPACE/kernel" >> $GITHUB_ENV
+
+      - name: Integrate SukiSU-Ultra
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" \
+            | bash -s "${{ github.event.inputs.SUKISU_BRANCH }}"
+          if [ -L "drivers/kernelsu" ]; then
+            REAL=$(readlink -f "drivers/kernelsu")
+            rm "drivers/kernelsu"
+            cp -a "$REAL" "drivers/kernelsu"
+          fi
+          echo "KSU_DIR=drivers/kernelsu" >> $GITHUB_ENV
+
+      - name: Integrate SUSFS
+        if: ${{ github.event.inputs.ENABLE_SUSFS == 'true' }}
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          git clone --depth=1 -b "${{ github.event.inputs.SUSFS_BRANCH }}" \
+            "${{ github.event.inputs.SUSFS_REPO }}" $GITHUB_WORKSPACE/susfs4ksu
+          SUSFS_DIR="$GITHUB_WORKSPACE/susfs4ksu"
+
+          [ -d "$SUSFS_DIR/kernel_patches/fs" ] && cp -rv "$SUSFS_DIR/kernel_patches/fs/"* fs/
+          [ -d "$SUSFS_DIR/kernel_patches/include" ] && cp -rv "$SUSFS_DIR/kernel_patches/include/"* include/
+
+          KSU_PATCH_DIR="$SUSFS_DIR/kernel_patches/KernelSU"
+          [ ! -d "$KSU_PATCH_DIR" ] && KSU_PATCH_DIR="$SUSFS_DIR/kernel_patches"
+          for p in "$KSU_PATCH_DIR/"*enable_susfs*.patch; do
+            [ -f "$p" ] || continue
+            git apply --check "$p" 2>/dev/null && git apply "$p" && echo "✅ KSU patch" && break
+            git apply --check --directory="drivers/kernelsu" "$p" 2>/dev/null && \
+              git apply --directory="drivers/kernelsu" "$p" && echo "✅ KSU patch (dir)" && break
+            git apply --reject "$p" 2>/dev/null || true; break
+          done
+
+          for p in "$SUSFS_DIR/kernel_patches/"*add_susfs*.patch "$SUSFS_DIR/kernel_patches/"*kernel*.patch; do
+            [ -f "$p" ] || continue
+            echo "$p" | grep -qiE "ksu|enable_susfs_for_ksu" && continue
+            git apply --check "$p" 2>/dev/null && git apply "$p" && echo "✅ Kernel patch" || \
+              { git apply --reject "$p" 2>/dev/null || true; }
+          done
+
+      - name: Patch ksu.c + dispatch.c for SUSFS compat
+        if: ${{ github.event.inputs.ENABLE_SUSFS == 'true' }}
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          set -e
+          KSU_C="drivers/kernelsu/ksu.c"
+          DISPATCH="drivers/kernelsu/supercall/dispatch.c"
+
+          TMPFILE=$(mktemp)
+          cat > "$TMPFILE" << 'COMPAT_EOF'
+          /* === SUSFS/KSU COMPAT BLOCK v25 === */
+          #include <linux/types.h>
+          #include <linux/string.h>
+          #include <linux/errno.h>
+          
+          #ifndef SUSFS_MAGIC
+          #define SUSFS_MAGIC 0x535553
+          #endif
+          #ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
+          #define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
+          #endif
+          #ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
+          #define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
+          #endif
+          #ifndef CMD_SUSFS_ADD_SUS_MAP
+          #define CMD_SUSFS_ADD_SUS_MAP 0x60030
+          #endif
+          #ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
+          #define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
+          #endif
+          
+          #ifndef strncpy_from_user_nofault
+          #define strncpy_from_user_nofault __strncpy_from_user_nofault
+          #endif
+          
+          #ifdef CONFIG_KSU_SUSFS
+          __attribute__((weak)) int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
+          __attribute__((weak)) int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }
+          __attribute__((weak)) void susfs_start_sdcard_monitor_fn(void) { }
+          __attribute__((weak)) int susfs_add_sus_map(void *a) { return -ENOSYS; }
+          __attribute__((weak)) int susfs_set_avc_log_spoofing(void *a) { return 0; }
+          __attribute__((weak)) int susfs_enable_log(void *a) { return 0; }
+          __attribute__((weak)) int susfs_show_variant(void *a) { return 0; }
+          __attribute__((weak)) int susfs_show_version(void *a) { return 0; }
+          __attribute__((weak)) bool susfs_starts_with(const char *s, const char *p) {
+              return s && p && strncmp(s, p, strlen(p)) == 0;
+          }
+          __attribute__((weak)) bool susfs_ends_with(const char *s, const char *x) {
+              size_t sl, xl;
+              if (!s || !x) return false;
+              sl = strlen(s); xl = strlen(x);
+              return xl <= sl && strcmp(s + sl - xl, x) == 0;
+          }
+          __attribute__((weak)) bool susfs_is_current_proc_umounted(void) { return false; }
+          __attribute__((weak)) void susfs_set_current_proc_umounted(void) { }
+          #endif
+          __attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }
+          __attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }
+          
+          /* === END COMPAT BLOCK === */
+          
+          COMPAT_EOF
+
+          cat "$TMPFILE" "$KSU_C" > "${KSU_C}.new"
+          mv "${KSU_C}.new" "$KSU_C"
+          rm -f "$TMPFILE"
+
+          sed -i 's/susfs_add_sus_path(arg)/susfs_add_sus_path((struct st_susfs_sus_path __user *)arg)/g' "$DISPATCH"
+          sed -i 's/susfs_add_sus_kstat(arg)/susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)arg)/g' "$DISPATCH"
+          sed -i 's/susfs_update_sus_kstat(arg)/susfs_update_sus_kstat((struct st_susfs_sus_kstat __user *)arg)/g' "$DISPATCH"
+          sed -i 's/susfs_add_sus_kstat_statically(arg)/susfs_add_sus_kstat_statically((struct st_susfs_sus_kstat_statically __user *)arg)/g' "$DISPATCH"
+          sed -i 's/susfs_set_uname(arg)/susfs_set_uname((struct st_susfs_uname __user *)arg)/g' "$DISPATCH"
+          sed -i 's/susfs_add_open_redirect(arg)/susfs_add_open_redirect((struct st_susfs_open_redirect __user *)arg)/g' "$DISPATCH"
+          sed -i 's/susfs_set_cmdline_or_bootconfig(arg)/susfs_set_cmdline_or_bootconfig((char __user *)arg)/g' "$DISPATCH"
+          sed -i 's/susfs_get_enabled_features(arg)/susfs_get_enabled_features((char __user *)arg, 4096)/g' "$DISPATCH"
+
+      - name: Handle SUSFS disabled
+        if: ${{ github.event.inputs.ENABLE_SUSFS != 'true' }}
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          mkdir -p include/linux
+          echo -e "#ifndef _LINUX_SUSFS_H\n#define _LINUX_SUSFS_H\n#endif" > include/linux/susfs.h
+
+      - name: Apply manual hook patches
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          chmod +x $GITHUB_WORKSPACE/apply_hooks.sh
+          bash $GITHUB_WORKSPACE/apply_hooks.sh
+
+      - name: Fix vendor code build errors
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          F="techpack/dataipa/drivers/platform/msm/ipa/ipa_v3/rmnet_ipa.c"
+          [ -f "$F" ] && {
+            sed -i 's/q6_ul_flt_rule_ptr->ip = flt_spec_ptr->ip_type;/q6_ul_flt_rule_ptr->ip = (enum ipa_ip_type)flt_spec_ptr->ip_type;/g' "$F"
+            sed -i 's/q6_ul_flt_rule_ptr->action = flt_spec_ptr->filter_action;/q6_ul_flt_rule_ptr->action = (enum ipa_flt_action)flt_spec_ptr->filter_action;/g' "$F"
+          }
+          for f in techpack/display/msm/sde/sde_hw_dsc_1_2.c techpack/display/msm/sde/sde_hw_vdc.c; do
+            [ -f "$f" ] && sed -i 's/^static inline _\([a-z]*\)_subblk_offset/static inline int _\1_subblk_offset/g' "$f"
+          done
+          find techpack/display -name "*.c" -exec grep -l "^static inline _.*_subblk_offset" {} \; 2>/dev/null | while read f; do
+            sed -i 's/^static inline _\([a-z]*\)_subblk_offset/static inline int _\1_subblk_offset/g' "$f"
+          done
+          TCP_MK="net/ipv4/Makefile"
+          [ -f "$TCP_MK" ] && ! grep -q "Wno-single-bit-bitfield" "$TCP_MK" && \
+            echo -e "\nCFLAGS_tcp_timer.o += -Wno-single-bit-bitfield-constant-conversion" >> "$TCP_MK"
+          PARSER_H="drivers/staging/qcacld-3.0/core/mac/src/include/parser_api.h"
+          [ -f "$PARSER_H" ] && sed -i 's/uint8_t mdie\[\]/uint8_t mdie[3]/g' "$PARSER_H"
+          USB_MK="drivers/usb/misc/Makefile"
+          [ -f "$USB_MK" ] && ! grep -q "Wno-single-bit-bitfield" "$USB_MK" && \
+            echo -e "\nCFLAGS_usbdtp.o += -Wno-single-bit-bitfield-constant-conversion" >> "$USB_MK"
+
+      - name: Create linker stubs in init/
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          cat > init/ksu_stubs.c << 'STUBS_EOF'
+          // SPDX-License-Identifier: GPL-2.0
+          /*
+           * KSU/SUSFS weak link stubs for builtin branch manual hooks.
+           * builtin branch provides strong definitions that override these.
+           */
+          #include <linux/types.h>
+          struct inode;
+          bool __attribute__((weak)) ksu_execveat_hook;
+          bool __attribute__((weak)) ksu_vfs_read_hook;
+          bool __attribute__((weak)) ksu_input_hook;
+          int __attribute__((weak)) ksu_handle_devpts(struct inode *inode) { return 0; }
+          void __attribute__((weak)) susfs_extra_works(void) { }
+          STUBS_EOF
+
+          if ! grep -q "ksu_stubs" init/Makefile; then
+            echo "" >> init/Makefile
+            echo "obj-y += ksu_stubs.o" >> init/Makefile
+          fi
+
+      - name: Setup Makefiles and defconfig
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          set -e
+
+          sed -i '/kernelsu/d' drivers/Makefile
+          echo "obj-y += kernelsu/" >> drivers/Makefile
+
+          KSU_MK="drivers/kernelsu/Makefile"
+          [ -f "$KSU_MK" ] && {
+            sed -i 's/obj-\$(CONFIG_KSU)/obj-y/g' "$KSU_MK"
+            sed -i 's/subdir-ccflags-\$(CONFIG_KSU)/subdir-ccflags-y/g' "$KSU_MK"
+          }
+
+          [ -f "fs/susfs.c" ] && {
+            sed -i '/susfs/d' fs/Makefile
+            echo "obj-y += susfs.o" >> fs/Makefile
+          }
+
+          if [ -f "drivers/Kconfig" ] && ! grep -q "kernelsu" "drivers/Kconfig"; then
+            ENDMENU=$(grep -n "^endmenu" "drivers/Kconfig" | tail -1 | cut -d: -f1)
+            [ -n "$ENDMENU" ] && sed -i "${ENDMENU}i\\source \"drivers/kernelsu/Kconfig\"" "drivers/Kconfig"
+          fi
+
+          DC="arch/arm64/configs/${{ github.event.inputs.DEFCONFIG }}"
+          sed -i '/CONFIG_KSU/d; /CONFIG_KPROBES/d; /CONFIG_KPM/d; /CONFIG_KALLSYMS_ALL/d' "$DC"
+          {
+            echo ""
+            echo "CONFIG_KSU=y"
+            echo "CONFIG_KSU_MANUAL_HOOK=y"
+            echo "# CONFIG_KPROBES is not set"
+            echo "CONFIG_KALLSYMS=y"
+            echo "CONFIG_KALLSYMS_ALL=y"
+          } >> "$DC"
+          [ "${{ github.event.inputs.ENABLE_KPM }}" = "true" ] && echo "CONFIG_KPM=y" >> "$DC"
+          if [ "${{ github.event.inputs.ENABLE_SUSFS }}" = "true" ]; then
+            {
+              echo "CONFIG_KSU_SUSFS=y"
+              echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
+              echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+              echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+              echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y"
+              echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
+              echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+              echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+              echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+              echo "# CONFIG_KSU_SUSFS_SUS_SU is not set"
+            } >> "$DC"
+          fi
+
+      - name: Build kernel via build.sh
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          chmod +x build.sh
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CLANG_PATH="$GITHUB_WORKSPACE/toolchain/clang/bin"
+          export PATH="$CLANG_PATH:$PATH"
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CC=clang
+          export LLVM=1
+          export LLVM_IAS=1
+          export DEFCONFIG="${{ github.event.inputs.DEFCONFIG }}"
+          export KERNEL_DEFCONFIG="${{ github.event.inputs.DEFCONFIG }}"
+          export TOOLCHAIN="$GITHUB_WORKSPACE/toolchain/clang"
+          export CLANG_DIR="$GITHUB_WORKSPACE/toolchain/clang"
+          export TC_DIR="$GITHUB_WORKSPACE/toolchain/clang"
+
+          BUILD_START=$(date +%s)
+          bash build.sh ${{ github.event.inputs.BUILD_ARGS }} 2>&1 | tee $GITHUB_WORKSPACE/build.log
+          BUILD_RC=${PIPESTATUS[0]}
+          echo ">>> Build: $(( ($(date +%s)-BUILD_START)/60 ))m (exit: $BUILD_RC)"
+
+          if [ $BUILD_RC -ne 0 ]; then
+            echo "::error::Build FAILED!"
+            exit $BUILD_RC
+          fi
+
+      - name: Post-process and upload ZIP
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          ZIPNAME=$(grep -oP '(?<=^Zip: ).*\.zip$' $GITHUB_WORKSPACE/build.log | tail -1)
+          if [ -z "$ZIPNAME" ]; then
+            ZIPNAME=$(find . -maxdepth 1 -name "*.zip" -newer build.sh 2>/dev/null | sort -t- -k5 -r | head -1 | sed 's|^\./||')
+          fi
+
+          if [ -z "$ZIPNAME" ] || [ ! -f "$ZIPNAME" ]; then
+            echo "::error::No ZIP found from build.sh!"
+            ls -la *.zip 2>/dev/null || echo "No .zip files"
+            exit 1
+          fi
+
+          echo ">>> Found ZIP: $ZIPNAME"
+
+          TMPDIR=$(mktemp -d)
+          unzip -o "$ZIPNAME" -d "$TMPDIR"
+          cp $GITHUB_WORKSPACE/anykernel.sh "$TMPDIR/anykernel.sh"
+          cd "$TMPDIR"
+          rm -f "$GITHUB_WORKSPACE/$ZIPNAME"
+          zip -r9 "$GITHUB_WORKSPACE/$ZIPNAME" . -x '*.git*'
+          cd "$GITHUB_WORKSPACE"
+          rm -rf "$TMPDIR"
+
+          echo ">>> Post-processed ZIP: $ZIPNAME"
+          echo "AK3_ZIP=$GITHUB_WORKSPACE/$ZIPNAME" >> $GITHUB_ENV
+          echo "AK3_NAME=${ZIPNAME%.zip}" >> $GITHUB_ENV
+
+      - name: Upload AnyKernel3 ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.AK3_NAME }}
+          path: ${{ env.AK3_ZIP }}
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ${{ github.workspace }}/build.log
