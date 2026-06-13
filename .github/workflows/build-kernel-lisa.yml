@@ -14,11 +14,11 @@ on:
       SUKISU_BRANCH:
         description: "SukiSU-Ultra branch"
         required: true
-        default: "main"
+        default: "builtin"
         type: choice
         options:
-          - main
           - builtin
+          - main
       DEFCONFIG:
         description: "Defconfig"
         required: true
@@ -136,58 +136,58 @@ jobs:
 
           TMPFILE=$(mktemp)
           cat > "$TMPFILE" << 'COMPAT_EOF'
-          /* === SUSFS/KSU COMPAT BLOCK v24b === */
-          #include <linux/types.h>
-          #include <linux/string.h>
-          #include <linux/errno.h>
+/* === SUSFS/KSU COMPAT BLOCK v25 === */
+#include <linux/types.h>
+#include <linux/string.h>
+#include <linux/errno.h>
 
-          #ifndef SUSFS_MAGIC
-          #define SUSFS_MAGIC 0x535553
-          #endif
-          #ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
-          #define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
-          #endif
-          #ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
-          #define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
-          #endif
-          #ifndef CMD_SUSFS_ADD_SUS_MAP
-          #define CMD_SUSFS_ADD_SUS_MAP 0x60030
-          #endif
-          #ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
-          #define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
-          #endif
+#ifndef SUSFS_MAGIC
+#define SUSFS_MAGIC 0x535553
+#endif
+#ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
+#define CMD_SUSFS_ADD_SUS_PATH_LOOP 0x60012
+#endif
+#ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
+#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 0x60020
+#endif
+#ifndef CMD_SUSFS_ADD_SUS_MAP
+#define CMD_SUSFS_ADD_SUS_MAP 0x60030
+#endif
+#ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
+#define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60040
+#endif
 
-          #ifndef strncpy_from_user_nofault
-          #define strncpy_from_user_nofault __strncpy_from_user_nofault
-          #endif
+#ifndef strncpy_from_user_nofault
+#define strncpy_from_user_nofault __strncpy_from_user_nofault
+#endif
 
-          #ifdef CONFIG_KSU_SUSFS
-          __attribute__((weak)) int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
-          __attribute__((weak)) int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }
-          __attribute__((weak)) void susfs_start_sdcard_monitor_fn(void) { }
-          __attribute__((weak)) int susfs_add_sus_map(void *a) { return -ENOSYS; }
-          __attribute__((weak)) int susfs_set_avc_log_spoofing(void *a) { return 0; }
-          __attribute__((weak)) int susfs_enable_log(void *a) { return 0; }
-          __attribute__((weak)) int susfs_show_variant(void *a) { return 0; }
-          __attribute__((weak)) int susfs_show_version(void *a) { return 0; }
-          __attribute__((weak)) bool susfs_starts_with(const char *s, const char *p) {
-              return s && p && strncmp(s, p, strlen(p)) == 0;
-          }
-          __attribute__((weak)) bool susfs_ends_with(const char *s, const char *x) {
-              size_t sl, xl;
-              if (!s || !x) return false;
-              sl = strlen(s); xl = strlen(x);
-              return xl <= sl && strcmp(s + sl - xl, x) == 0;
-          }
-          __attribute__((weak)) bool susfs_is_current_proc_umounted(void) { return false; }
-          __attribute__((weak)) void susfs_set_current_proc_umounted(void) { }
-          #endif
-          __attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }
-          __attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }
+#ifdef CONFIG_KSU_SUSFS
+__attribute__((weak)) int susfs_add_sus_path_loop(void *a) { return -ENOSYS; }
+__attribute__((weak)) int susfs_set_hide_sus_mnts_for_non_su_procs(void *a) { return 0; }
+__attribute__((weak)) void susfs_start_sdcard_monitor_fn(void) { }
+__attribute__((weak)) int susfs_add_sus_map(void *a) { return -ENOSYS; }
+__attribute__((weak)) int susfs_set_avc_log_spoofing(void *a) { return 0; }
+__attribute__((weak)) int susfs_enable_log(void *a) { return 0; }
+__attribute__((weak)) int susfs_show_variant(void *a) { return 0; }
+__attribute__((weak)) int susfs_show_version(void *a) { return 0; }
+__attribute__((weak)) bool susfs_starts_with(const char *s, const char *p) {
+    return s && p && strncmp(s, p, strlen(p)) == 0;
+}
+__attribute__((weak)) bool susfs_ends_with(const char *s, const char *x) {
+    size_t sl, xl;
+    if (!s || !x) return false;
+    sl = strlen(s); xl = strlen(x);
+    return xl <= sl && strcmp(s + sl - xl, x) == 0;
+}
+__attribute__((weak)) bool susfs_is_current_proc_umounted(void) { return false; }
+__attribute__((weak)) void susfs_set_current_proc_umounted(void) { }
+#endif
+__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }
+__attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }
 
-          /* === END COMPAT BLOCK === */
+/* === END COMPAT BLOCK === */
 
-          COMPAT_EOF
+COMPAT_EOF
 
           cat "$TMPFILE" "$KSU_C" > "${KSU_C}.new"
           mv "${KSU_C}.new" "$KSU_C"
@@ -208,6 +208,12 @@ jobs:
         run: |
           mkdir -p include/linux
           echo -e "#ifndef _LINUX_SUSFS_H\n#define _LINUX_SUSFS_H\n#endif" > include/linux/susfs.h
+
+      - name: Apply manual hook patches
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          chmod +x $GITHUB_WORKSPACE/apply_hooks.sh
+          bash $GITHUB_WORKSPACE/apply_hooks.sh
 
       - name: Fix vendor code build errors
         working-directory: ${{ env.KERNEL_DIR }}
@@ -232,24 +238,23 @@ jobs:
           [ -f "$USB_MK" ] && ! grep -q "Wno-single-bit-bitfield" "$USB_MK" && \
             echo -e "\nCFLAGS_usbdtp.o += -Wno-single-bit-bitfield-constant-conversion" >> "$USB_MK"
 
-      # ═══════════════════════════════════════════════════
-      #  v24b: Minimal linker stub — ONLY susfs_extra_works
-      #  (referenced by KSU inline hook ksu_handle_setresuid)
-      # ═══════════════════════════════════════════════════
-      - name: Create minimal linker stub in init/
+      - name: Create linker stubs in init/
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           cat > init/ksu_stubs.c << 'STUBS_EOF'
-          // SPDX-License-Identifier: GPL-2.0
-          /*
-           * Minimal SUSFS weak stub for inline hook mode.
-           * susfs_extra_works() is called from ksu_handle_setresuid()
-           * but may not be defined if SUSFS patch didn't fully apply.
-           * This weak stub satisfies the linker; the real SUSFS
-           * definition in fs/susfs.c overrides it when available.
-           */
-          void __attribute__((weak)) susfs_extra_works(void) { }
-          STUBS_EOF
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * KSU/SUSFS weak link stubs for builtin branch manual hooks.
+ * builtin branch provides strong definitions that override these.
+ */
+#include <linux/types.h>
+struct inode;
+bool __attribute__((weak)) ksu_execveat_hook;
+bool __attribute__((weak)) ksu_vfs_read_hook;
+bool __attribute__((weak)) ksu_input_hook;
+int __attribute__((weak)) ksu_handle_devpts(struct inode *inode) { return 0; }
+void __attribute__((weak)) susfs_extra_works(void) { }
+STUBS_EOF
 
           if ! grep -q "ksu_stubs" init/Makefile; then
             echo "" >> init/Makefile
@@ -281,10 +286,12 @@ jobs:
           fi
 
           DC="arch/arm64/configs/${{ github.event.inputs.DEFCONFIG }}"
-          sed -i '/CONFIG_KSU/d; /CONFIG_KPM/d; /CONFIG_KALLSYMS_ALL/d' "$DC"
+          sed -i '/CONFIG_KSU/d; /CONFIG_KPROBES/d; /CONFIG_KPM/d; /CONFIG_KALLSYMS_ALL/d' "$DC"
           {
             echo ""
             echo "CONFIG_KSU=y"
+            echo "CONFIG_KSU_MANUAL_HOOK=y"
+            echo "# CONFIG_KPROBES is not set"
             echo "CONFIG_KALLSYMS=y"
             echo "CONFIG_KALLSYMS_ALL=y"
           } >> "$DC"
