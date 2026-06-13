@@ -139,7 +139,7 @@ jobs:
 
           TMPFILE=$(mktemp)
           cat > "$TMPFILE" << 'COMPAT_EOF'
-          /* === SUSFS/KSU COMPAT BLOCK v19b === */
+          /* === SUSFS/KSU COMPAT BLOCK v19c === */
           #include <linux/types.h>
           #include <linux/string.h>
           #include <linux/errno.h>
@@ -241,67 +241,45 @@ jobs:
           [ -f "$USB_MK" ] && ! grep -q "Wno-single-bit-bitfield" "$USB_MK" && \
             echo -e "\nCFLAGS_usbdtp.o += -Wno-single-bit-bitfield-constant-conversion" >> "$USB_MK"
 
-      # ═══════════════════════════════════════════════════
-      #  v19b: FIXED weak stubs (no __read_mostly conflict)
-      # ═══════════════════════════════════════════════════
       - name: Create linker stubs in init/
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           set -e
-          echo "============================================"
-          echo "  v19b: Creating weak link stubs in init/"
-          echo "============================================"
-
           cat > init/ksu_stubs.c << 'STUBS_EOF'
           // SPDX-License-Identifier: GPL-2.0
           /*
-           * KSU/SUSFS weak link stubs (v19b)
+           * KSU/SUSFS weak link stubs (v19c)
            *
            * Provides weak definitions for symbols referenced by manual hook patches.
            * SukiSU-Ultra uses SUSFS_INLINE_HOOK mode which doesn't export these
-           * as traditional globals. The weak attribute lets the linker resolve
-           * references; if KSU provides strong definitions, they override these.
+           * as traditional globals. Weak stubs satisfy the linker; if KSU provides
+           * strong definitions, they override these.
            */
 
           #include <linux/types.h>
 
           struct inode;
 
-          /* Bool hook variables — referenced by apply_hooks.sh patches.
-           * NOTE: cannot combine __attribute__((weak)) with __read_mostly
-           *       on the same declaration (Clang syntax error), so we omit
-           *       __read_mostly here. The real KSU definitions use it. */
+          /* Bool hook variables — no __read_mostly (conflicts with weak attr in Clang) */
           bool __attribute__((weak)) ksu_execveat_hook;
           bool __attribute__((weak)) ksu_vfs_read_hook;
           bool __attribute__((weak)) ksu_input_hook;
 
-          /* fs/devpts/inode.c: extern int ksu_handle_devpts(struct inode*) */
           int __attribute__((weak)) ksu_handle_devpts(struct inode *inode)
           {
           	return 0;
           }
 
-          /* Referenced from KSU SUSFS hook code (ksu_handle_setresuid etc.) */
           void __attribute__((weak)) susfs_extra_works(void)
           {
           }
           STUBS_EOF
 
-          echo "  ✅ Created init/ksu_stubs.c"
-
           if ! grep -q "ksu_stubs" init/Makefile; then
             echo "" >> init/Makefile
             echo "# KSU/SUSFS weak link stubs" >> init/Makefile
             echo "obj-y += ksu_stubs.o" >> init/Makefile
-            echo "  ✅ Added ksu_stubs.o to init/Makefile"
           fi
-
-          echo ""
-          echo ">>> init/ksu_stubs.c:"
-          cat init/ksu_stubs.c
-          echo ""
-          echo ">>> init/Makefile (last 5 lines):"
-          tail -5 init/Makefile
 
       - name: Setup Makefiles and defconfig
         working-directory: ${{ env.KERNEL_DIR }}
@@ -409,15 +387,60 @@ jobs:
           echo ">>> Build: $(( ($(date +%s)-BUILD_START)/60 ))m (exit: $BUILD_RC)"
           [ $BUILD_RC -ne 0 ] && { echo "::error::Build FAILED!"; exit $BUILD_RC; }
 
+      # ═══════════════════════════════════════════════════
+      #  v19c: ROBUST kernel image search
+      # ═══════════════════════════════════════════════════
       - name: Locate kernel image
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          for d in "out/arch/arm64/boot" "arch/arm64/boot" "out/dist"; do
+          echo ">>> Searching for kernel image..."
+          KERNEL_IMAGE=""
+
+          # Check standard paths first
+          for d in out/arch/arm64/boot arch/arm64/boot out/dist out; do
             for img in Image Image.gz Image.gz-dtb; do
-              [ -f "$d/$img" ] && { echo "KERNEL_IMAGE=$(realpath $d/$img)" >> $GITHUB_ENV; break 2; }
+              if [ -f "$d/$img" ]; then
+                KERNEL_IMAGE="$(realpath "$d/$img")"
+                echo ">>> Found at standard path: $KERNEL_IMAGE"
+                break 2
+              fi
             done
           done
-          [ -z "${KERNEL_IMAGE:-}" ] && { echo "::error::No kernel image!"; exit 1; }
+
+          # Fallback: recursive search in out/
+          if [ -z "$KERNEL_IMAGE" ]; then
+            echo ">>> Not in standard paths, searching out/ ..."
+            FOUND=$(find out/ -type f \( -name "Image" -o -name "Image.gz" -o -name "Image.gz-dtb" \) 2>/dev/null | head -1)
+            if [ -n "$FOUND" ]; then
+              KERNEL_IMAGE="$(realpath "$FOUND")"
+              echo ">>> Found via search: $KERNEL_IMAGE"
+            fi
+          fi
+
+          # Fallback: search entire tree
+          if [ -z "$KERNEL_IMAGE" ]; then
+            echo ">>> Searching entire tree..."
+            FOUND=$(find . -type f \( -name "Image" -o -name "Image.gz" -o -name "Image.gz-dtb" \) -not -path "./.git/*" 2>/dev/null | head -1)
+            if [ -n "$FOUND" ]; then
+              KERNEL_IMAGE="$(realpath "$FOUND")"
+              echo ">>> Found via deep search: $KERNEL_IMAGE"
+            fi
+          fi
+
+          if [ -z "$KERNEL_IMAGE" ]; then
+            echo ""
+            echo "::error::No kernel image found!"
+            echo ">>> DEBUG: listing all Image* files:"
+            find . -type f -name "Image*" -not -path "./.git/*" 2>/dev/null || echo "  NONE"
+            echo ">>> DEBUG: listing boot directories:"
+            find . -type d -name "boot" -not -path "./.git/*" 2>/dev/null || echo "  NONE"
+            echo ">>> DEBUG: listing out/ top-level:"
+            ls -la out/ 2>/dev/null || echo "  out/ not found"
+            exit 1
+          fi
+
+          echo "KERNEL_IMAGE=$KERNEL_IMAGE" >> $GITHUB_ENV
+          echo ">>> Using: $KERNEL_IMAGE ($(stat -c%s "$KERNEL_IMAGE") bytes)"
 
       - name: Package AnyKernel3
         run: |
