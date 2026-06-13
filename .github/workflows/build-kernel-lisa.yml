@@ -384,8 +384,12 @@ jobs:
           BUILD_START=$(date +%s)
           make $MAKE_ARGS -j$(nproc) ${{ github.event.inputs.BUILD_ARGS }} 2>&1 | tee $GITHUB_WORKSPACE/build.log
           BUILD_RC=${PIPESTATUS[0]}
-          echo ">>> Build: $(( ($(date +%s)-BUILD_START)/60 ))m (exit: $BUILD_RC)"
-          [ $BUILD_RC -ne 0 ] && { echo "::error::Build FAILED!"; exit $BUILD_RC; }
+          echo ">>> Build: $(( ($(date +%s)-BUILD_START)/60 ))m (exit: $BUILD_RC)"      
+          if [ $BUILD_RC -ne 0 ]; then
+            echo "::error::Build FAILED!"
+            exit $BUILD_RC
+          fi
+
 
       # ═══════════════════════════════════════════════════
       #  v19c: ROBUST kernel image search
