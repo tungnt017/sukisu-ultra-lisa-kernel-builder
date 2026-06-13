@@ -12,7 +12,7 @@ find_line_after() {
 }
 echo ""
 echo "============================================"
-echo "  SukiSU-Ultra Manual Hook Patcher (v26)"
+echo "  SukiSU-Ultra Manual Hook Patcher (v26b)"
 echo "  Format: direct call, NO bool check"
 echo "============================================"
 echo ""
@@ -111,21 +111,11 @@ if grep -q "ksu_handle_input_handle_event" "$FILE"; then skip "already patched."
     fi
 fi
 
-FILE="fs/devpts/inode.c"; info "Patching $FILE ..."
-if grep -q "ksu_handle_devpts" "$FILE"; then skip "already patched."; else
-    FUNC_LINE=$(find_line "$FILE" "^void \*devpts_get_priv")
-    if [ -z "$FUNC_LINE" ]; then fail "not found"; else
-        EXTERN='#ifdef CONFIG_KSU\nextern int ksu_handle_devpts(struct inode*);\n#endif'
-        sed -i "${FUNC_LINE}i\\${EXTERN}" "$FILE"
-        FUNC_LINE=$(find_line "$FILE" "^void \*devpts_get_priv")
-        INSERT_LINE=$(find_line_after "$FILE" "$FUNC_LINE" "if (dentry->d_sb->s_magic")
-        if [ -n "$INSERT_LINE" ]; then
-            HOOK='#ifdef CONFIG_KSU\n\tksu_handle_devpts(dentry->d_inode);\n#endif'
-            sed -i "${INSERT_LINE}i\\${HOOK}" "$FILE"; ok "done"
-        else fail "not found"; fi
-    fi
-fi
+# NOTE: devpts/inode.c hook REMOVED in v26b
+# builtin branch does NOT export ksu_handle_devpts
+# weak stub in init/ksu_stubs.c provides fallback
+info "Skipping devpts/inode.c (not exported by builtin branch)"
 
 echo ""
-echo "  Hook patching complete (v26 — direct call, no bool check)."
+echo "  Hook patching complete (v26b — no devpts hook)."
 echo ""
