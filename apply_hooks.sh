@@ -12,7 +12,8 @@ find_line_after() {
 }
 echo ""
 echo "============================================"
-echo "  SukiSU-Ultra Manual Hook Patcher"
+echo "  SukiSU-Ultra Manual Hook Patcher (v26)"
+echo "  Format: direct call, NO bool check"
 echo "============================================"
 echo ""
 
@@ -20,13 +21,13 @@ FILE="fs/exec.c"; info "Patching $FILE ..."
 if grep -q "ksu_handle_execveat" "$FILE"; then skip "already patched."; else
     FUNC_LINE=$(find_line "$FILE" "^static int do_execveat_common")
     if [ -z "$FUNC_LINE" ]; then fail "not found"; else
-        EXTERN='#ifdef CONFIG_KSU\nextern bool ksu_execveat_hook __read_mostly;\nextern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,\n\t\t\tvoid *envp, int *flags);\nextern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,\n\t\t\t\t void *argv, void *envp, int *flags);\n#endif'
+        EXTERN='#ifdef CONFIG_KSU\nextern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,\n\t\t\tvoid *envp, int *flags);\nextern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,\n\t\t\t\t void *argv, void *envp, int *flags);\n#endif'
         sed -i "${FUNC_LINE}i\\${EXTERN}" "$FILE"
         FUNC_LINE=$(find_line "$FILE" "^static int do_execveat_common")
         RETURN_LINE=$(find_line_after "$FILE" "$FUNC_LINE" "return .*__do_execve\|return .*do_execveat\|return retval")
         [ -z "$RETURN_LINE" ] && { BRACE_LINE=$(find_line_after "$FILE" "$FUNC_LINE" "^{"); RETURN_LINE=$(find_line_after "$FILE" "$BRACE_LINE" "return "); }
         if [ -n "$RETURN_LINE" ]; then
-            HOOK='#ifdef CONFIG_KSU\n\tif (unlikely(ksu_execveat_hook))\n\t\tksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\n\telse\n\t\tksu_handle_execveat_sucompat(\&fd, \&filename, \&argv, \&envp, \&flags);\n#endif'
+            HOOK='#ifdef CONFIG_KSU\n\tksu_handle_execveat(\&fd, \&filename, \&argv, \&envp, \&flags);\n\tksu_handle_execveat_sucompat(\&fd, \&filename, \&argv, \&envp, \&flags);\n#endif'
             sed -i "${RETURN_LINE}i\\${HOOK}" "$FILE"; ok "done"
         else fail "no return"; fi
     fi
@@ -52,7 +53,7 @@ FILE="fs/read_write.c"; info "Patching $FILE ..."
 if grep -q "ksu_handle_vfs_read" "$FILE"; then skip "already patched."; else
     FUNC_LINE=$(find_line "$FILE" "^ssize_t vfs_read(")
     if [ -z "$FUNC_LINE" ]; then fail "not found"; else
-        EXTERN='#ifdef CONFIG_KSU\nextern bool ksu_vfs_read_hook __read_mostly;\nextern int ksu_handle_vfs_read(struct file **file_ptr, char __user **buf_ptr,\n\t\t\tsize_t *count_ptr, loff_t **pos);\n#endif'
+        EXTERN='#ifdef CONFIG_KSU\nextern int ksu_handle_vfs_read(struct file **file_ptr, char __user **buf_ptr,\n\t\t\tsize_t *count_ptr, loff_t **pos);\n#endif'
         sed -i "${FUNC_LINE}i\\${EXTERN}" "$FILE"
         FUNC_LINE=$(find_line "$FILE" "^ssize_t vfs_read(")
         INSERT_LINE=$(find_line_after "$FILE" "$FUNC_LINE" "if (!(file->f_mode & FMODE_READ))")
@@ -61,13 +62,13 @@ if grep -q "ksu_handle_vfs_read" "$FILE"; then skip "already patched."; else
             [ "$DISTANCE" -gt 30 ] && INSERT_LINE=""
         fi
         if [ -n "$INSERT_LINE" ]; then
-            HOOK='#ifdef CONFIG_KSU\n\tif (unlikely(ksu_vfs_read_hook))\n\t\tksu_handle_vfs_read(\&file, \&buf, \&count, \&pos);\n#endif'
+            HOOK='#ifdef CONFIG_KSU\n\tksu_handle_vfs_read(\&file, \&buf, \&count, \&pos);\n#endif'
             sed -i "${INSERT_LINE}i\\${HOOK}" "$FILE"; ok "done"
         else
             RET_DECL=$(find_line_after "$FILE" "$FUNC_LINE" "ssize_t ret")
             if [ -n "$RET_DECL" ]; then
                 AFTER=$((RET_DECL + 1))
-                HOOK='#ifdef CONFIG_KSU\n\tif (unlikely(ksu_vfs_read_hook))\n\t\tksu_handle_vfs_read(\&file, \&buf, \&count, \&pos);\n#endif'
+                HOOK='#ifdef CONFIG_KSU\n\tksu_handle_vfs_read(\&file, \&buf, \&count, \&pos);\n#endif'
                 sed -i "${AFTER}i\\${HOOK}" "$FILE"; ok "fallback"
             else fail "no safe point"; fi
         fi
@@ -99,12 +100,12 @@ FILE="drivers/input/input.c"; info "Patching $FILE ..."
 if grep -q "ksu_handle_input_handle_event" "$FILE"; then skip "already patched."; else
     FUNC_LINE=$(find_line "$FILE" "^static void input_handle_event")
     if [ -z "$FUNC_LINE" ]; then fail "not found"; else
-        EXTERN='#ifdef CONFIG_KSU\nextern bool ksu_input_hook __read_mostly;\nextern int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value);\n#endif'
+        EXTERN='#ifdef CONFIG_KSU\nextern int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value);\n#endif'
         sed -i "${FUNC_LINE}i\\${EXTERN}" "$FILE"
         FUNC_LINE=$(find_line "$FILE" "^static void input_handle_event")
         INSERT_LINE=$(find_line_after "$FILE" "$FUNC_LINE" "if (disposition != INPUT_IGNORE_EVENT")
         if [ -n "$INSERT_LINE" ]; then
-            HOOK='#ifdef CONFIG_KSU\n\tif (unlikely(ksu_input_hook))\n\t\tksu_handle_input_handle_event(\&type, \&code, \&value);\n#endif'
+            HOOK='#ifdef CONFIG_KSU\n\tksu_handle_input_handle_event(\&type, \&code, \&value);\n#endif'
             sed -i "${INSERT_LINE}i\\${HOOK}" "$FILE"; ok "done"
         else fail "not found"; fi
     fi
@@ -126,5 +127,5 @@ if grep -q "ksu_handle_devpts" "$FILE"; then skip "already patched."; else
 fi
 
 echo ""
-echo "  Hook patching complete."
+echo "  Hook patching complete (v26 — direct call, no bool check)."
 echo ""
