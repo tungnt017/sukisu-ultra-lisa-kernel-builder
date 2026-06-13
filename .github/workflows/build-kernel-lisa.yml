@@ -28,7 +28,7 @@ on:
         required: true
         default: "https://github.com/ZyCromerZ/Clang/releases/download/21.0.0-20250517-release/Clang-21.0.0-20250517.tar.gz"
       BUILD_ARGS:
-        description: "Extra make arguments"
+        description: "Extra build.sh arguments"
         required: false
         default: ""
       ENABLE_KPM:
@@ -49,10 +49,6 @@ on:
         description: "SUSFS branch"
         required: false
         default: "kernel-5.4"
-      ANYKERNEL_REPO:
-        description: "AnyKernel3 repo"
-        required: true
-        default: "https://github.com/osm0sis/AnyKernel3"
 
 jobs:
   build:
@@ -72,6 +68,7 @@ jobs:
             flex git gnupg libelf-dev libssl-dev lld llvm \
             python3 python-is-python3 zip unzip wget \
             device-tree-compiler gcc-aarch64-linux-gnu
+          sudo ln -sf /usr/bin/python3 /usr/bin/python2 || true
 
       - name: Setup Clang toolchain
         run: |
@@ -139,7 +136,7 @@ jobs:
 
           TMPFILE=$(mktemp)
           cat > "$TMPFILE" << 'COMPAT_EOF'
-          /* === SUSFS/KSU COMPAT BLOCK v19c === */
+          /* === SUSFS/KSU COMPAT BLOCK v24b === */
           #include <linux/types.h>
           #include <linux/string.h>
           #include <linux/errno.h>
@@ -212,12 +209,6 @@ jobs:
           mkdir -p include/linux
           echo -e "#ifndef _LINUX_SUSFS_H\n#define _LINUX_SUSFS_H\n#endif" > include/linux/susfs.h
 
-      - name: Apply manual hook patches
-        working-directory: ${{ env.KERNEL_DIR }}
-        run: |
-          chmod +x $GITHUB_WORKSPACE/apply_hooks.sh
-          bash $GITHUB_WORKSPACE/apply_hooks.sh
-
       - name: Fix vendor code build errors
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
@@ -241,43 +232,27 @@ jobs:
           [ -f "$USB_MK" ] && ! grep -q "Wno-single-bit-bitfield" "$USB_MK" && \
             echo -e "\nCFLAGS_usbdtp.o += -Wno-single-bit-bitfield-constant-conversion" >> "$USB_MK"
 
-      - name: Create linker stubs in init/
+      # ═══════════════════════════════════════════════════
+      #  v24b: Minimal linker stub — ONLY susfs_extra_works
+      #  (referenced by KSU inline hook ksu_handle_setresuid)
+      # ═══════════════════════════════════════════════════
+      - name: Create minimal linker stub in init/
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          set -e
           cat > init/ksu_stubs.c << 'STUBS_EOF'
-          // SPDX-License-Identifier: GPL-2.0
-          /*
-           * KSU/SUSFS weak link stubs (v19c)
-           *
-           * Provides weak definitions for symbols referenced by manual hook patches.
-           * SukiSU-Ultra uses SUSFS_INLINE_HOOK mode which doesn't export these
-           * as traditional globals. Weak stubs satisfy the linker; if KSU provides
-           * strong definitions, they override these.
-           */
-
-          #include <linux/types.h>
-
-          struct inode;
-
-          /* Bool hook variables — no __read_mostly (conflicts with weak attr in Clang) */
-          bool __attribute__((weak)) ksu_execveat_hook;
-          bool __attribute__((weak)) ksu_vfs_read_hook;
-          bool __attribute__((weak)) ksu_input_hook;
-
-          int __attribute__((weak)) ksu_handle_devpts(struct inode *inode)
-          {
-          	return 0;
-          }
-
-          void __attribute__((weak)) susfs_extra_works(void)
-          {
-          }
-          STUBS_EOF
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Minimal SUSFS weak stub for inline hook mode.
+ * susfs_extra_works() is called from ksu_handle_setresuid()
+ * but may not be defined if SUSFS patch didn't fully apply.
+ * This weak stub satisfies the linker; the real SUSFS
+ * definition in fs/susfs.c overrides it when available.
+ */
+void __attribute__((weak)) susfs_extra_works(void) { }
+STUBS_EOF
 
           if ! grep -q "ksu_stubs" init/Makefile; then
             echo "" >> init/Makefile
-            echo "# KSU/SUSFS weak link stubs" >> init/Makefile
             echo "obj-y += ksu_stubs.o" >> init/Makefile
           fi
 
@@ -306,12 +281,10 @@ jobs:
           fi
 
           DC="arch/arm64/configs/${{ github.event.inputs.DEFCONFIG }}"
-          sed -i '/CONFIG_KSU/d; /CONFIG_KPROBES/d; /CONFIG_KPM/d; /CONFIG_KALLSYMS_ALL/d' "$DC"
+          sed -i '/CONFIG_KSU/d; /CONFIG_KPM/d; /CONFIG_KALLSYMS_ALL/d' "$DC"
           {
             echo ""
             echo "CONFIG_KSU=y"
-            echo "CONFIG_KSU_MANUAL_HOOK=y"
-            echo "# CONFIG_KPROBES is not set"
             echo "CONFIG_KALLSYMS=y"
             echo "CONFIG_KALLSYMS_ALL=y"
           } >> "$DC"
@@ -331,139 +304,69 @@ jobs:
             } >> "$DC"
           fi
 
-      - name: Build kernel (direct make)
+      - name: Build kernel via build.sh
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          set -e
+          chmod +x build.sh
           export ARCH=arm64
           export SUBARCH=arm64
-          export PATH="$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH"
-          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CLANG_PATH="$GITHUB_WORKSPACE/toolchain/clang/bin"
+          export PATH="$CLANG_PATH:$PATH"
           export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CC=clang
+          export LLVM=1
+          export LLVM_IAS=1
+          export DEFCONFIG="${{ github.event.inputs.DEFCONFIG }}"
+          export KERNEL_DEFCONFIG="${{ github.event.inputs.DEFCONFIG }}"
+          export TOOLCHAIN="$GITHUB_WORKSPACE/toolchain/clang"
+          export CLANG_DIR="$GITHUB_WORKSPACE/toolchain/clang"
+          export TC_DIR="$GITHUB_WORKSPACE/toolchain/clang"
 
-          MAKE_ARGS="O=out \
-            ARCH=arm64 \
-            CC=clang \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CLANG_TRIPLE=aarch64-linux-gnu-"
-
-          echo ">>> Step 1: defconfig"
-          make $MAKE_ARGS ${{ github.event.inputs.DEFCONFIG }} 2>&1 | tail -5
-
-          echo ">>> Step 2: Inject CONFIG_KSU"
-          CFG="out/.config"
-          sed -i '/CONFIG_KSU/d; /CONFIG_KPM/d' "$CFG"
-          {
-            echo "CONFIG_KSU=y"
-            echo "CONFIG_KSU_MANUAL_HOOK=y"
-            echo "CONFIG_KSU_SUSFS=y"
-            echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
-            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
-            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
-            echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y"
-            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
-            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
-            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
-            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
-            echo "CONFIG_KALLSYMS=y"
-            echo "CONFIG_KALLSYMS_ALL=y"
-          } >> "$CFG"
-          [ "${{ github.event.inputs.ENABLE_KPM }}" = "true" ] && echo "CONFIG_KPM=y" >> "$CFG"
-
-          echo ">>> Step 3: olddefconfig"
-          make $MAKE_ARGS olddefconfig 2>&1 | tail -5
-          grep -q "^CONFIG_KSU=y" "$CFG" || echo "CONFIG_KSU=y" >> "$CFG"
-
-          echo ">>> Step 4: Verify"
-          grep "CONFIG_KSU" "$CFG" | head -10
-
-          echo ""
-          echo ">>> Step 5: BUILD"
           BUILD_START=$(date +%s)
-          make $MAKE_ARGS -j$(nproc) ${{ github.event.inputs.BUILD_ARGS }} 2>&1 | tee $GITHUB_WORKSPACE/build.log
+          bash build.sh ${{ github.event.inputs.BUILD_ARGS }} 2>&1 | tee $GITHUB_WORKSPACE/build.log
           BUILD_RC=${PIPESTATUS[0]}
-          echo ">>> Build: $(( ($(date +%s)-BUILD_START)/60 ))m (exit: $BUILD_RC)"      
+          echo ">>> Build: $(( ($(date +%s)-BUILD_START)/60 ))m (exit: $BUILD_RC)"
+
           if [ $BUILD_RC -ne 0 ]; then
             echo "::error::Build FAILED!"
             exit $BUILD_RC
           fi
 
-
-      # ═══════════════════════════════════════════════════
-      #  v19c: ROBUST kernel image search
-      # ═══════════════════════════════════════════════════
-      - name: Locate kernel image
+      - name: Post-process and upload ZIP
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          echo ">>> Searching for kernel image..."
-          KERNEL_IMAGE=""
-
-          # Check standard paths first
-          for d in out/arch/arm64/boot arch/arm64/boot out/dist out; do
-            for img in Image Image.gz Image.gz-dtb; do
-              if [ -f "$d/$img" ]; then
-                KERNEL_IMAGE="$(realpath "$d/$img")"
-                echo ">>> Found at standard path: $KERNEL_IMAGE"
-                break 2
-              fi
-            done
-          done
-
-          # Fallback: recursive search in out/
-          if [ -z "$KERNEL_IMAGE" ]; then
-            echo ">>> Not in standard paths, searching out/ ..."
-            FOUND=$(find out/ -type f \( -name "Image" -o -name "Image.gz" -o -name "Image.gz-dtb" \) 2>/dev/null | head -1)
-            if [ -n "$FOUND" ]; then
-              KERNEL_IMAGE="$(realpath "$FOUND")"
-              echo ">>> Found via search: $KERNEL_IMAGE"
-            fi
+          ZIPNAME=$(grep -oP '(?<=^Zip: ).*\.zip$' $GITHUB_WORKSPACE/build.log | tail -1)
+          if [ -z "$ZIPNAME" ]; then
+            ZIPNAME=$(find . -maxdepth 1 -name "*.zip" -newer build.sh 2>/dev/null | sort -t- -k5 -r | head -1 | sed 's|^\./||')
           fi
 
-          # Fallback: search entire tree
-          if [ -z "$KERNEL_IMAGE" ]; then
-            echo ">>> Searching entire tree..."
-            FOUND=$(find . -type f \( -name "Image" -o -name "Image.gz" -o -name "Image.gz-dtb" \) -not -path "./.git/*" 2>/dev/null | head -1)
-            if [ -n "$FOUND" ]; then
-              KERNEL_IMAGE="$(realpath "$FOUND")"
-              echo ">>> Found via deep search: $KERNEL_IMAGE"
-            fi
-          fi
-
-          if [ -z "$KERNEL_IMAGE" ]; then
-            echo ""
-            echo "::error::No kernel image found!"
-            echo ">>> DEBUG: listing all Image* files:"
-            find . -type f -name "Image*" -not -path "./.git/*" 2>/dev/null || echo "  NONE"
-            echo ">>> DEBUG: listing boot directories:"
-            find . -type d -name "boot" -not -path "./.git/*" 2>/dev/null || echo "  NONE"
-            echo ">>> DEBUG: listing out/ top-level:"
-            ls -la out/ 2>/dev/null || echo "  out/ not found"
+          if [ -z "$ZIPNAME" ] || [ ! -f "$ZIPNAME" ]; then
+            echo "::error::No ZIP found from build.sh!"
+            ls -la *.zip 2>/dev/null || echo "No .zip files"
             exit 1
           fi
 
-          echo "KERNEL_IMAGE=$KERNEL_IMAGE" >> $GITHUB_ENV
-          echo ">>> Using: $KERNEL_IMAGE ($(stat -c%s "$KERNEL_IMAGE") bytes)"
+          echo ">>> Found ZIP: $ZIPNAME"
 
-      - name: Package AnyKernel3
-        run: |
-          git clone --depth=1 "${{ github.event.inputs.ANYKERNEL_REPO }}" $GITHUB_WORKSPACE/AnyKernel3
-          cp $GITHUB_WORKSPACE/anykernel.sh $GITHUB_WORKSPACE/AnyKernel3/anykernel.sh
-          cp "$KERNEL_IMAGE" $GITHUB_WORKSPACE/AnyKernel3/
-          cd $GITHUB_WORKSPACE/AnyKernel3; rm -rf .git .github LICENSE README.md
-          STAG=""; [ "${{ github.event.inputs.ENABLE_SUSFS }}" = "true" ] && STAG="-SUSFS"
-          ZIPNAME="SukiSU-Ultra${STAG}-lisa-$(date +%Y%m%d-%H%M)-AnyKernel3.zip"
+          TMPDIR=$(mktemp -d)
+          unzip -o "$ZIPNAME" -d "$TMPDIR"
+          cp $GITHUB_WORKSPACE/anykernel.sh "$TMPDIR/anykernel.sh"
+          cd "$TMPDIR"
+          rm -f "$GITHUB_WORKSPACE/$ZIPNAME"
           zip -r9 "$GITHUB_WORKSPACE/$ZIPNAME" . -x '*.git*'
-          echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
-        env:
-          KERNEL_IMAGE: ${{ env.KERNEL_IMAGE }}
+          cd "$GITHUB_WORKSPACE"
+          rm -rf "$TMPDIR"
 
-      - name: Upload AnyKernel3 zip
+          echo ">>> Post-processed ZIP: $ZIPNAME"
+          echo "AK3_ZIP=$GITHUB_WORKSPACE/$ZIPNAME" >> $GITHUB_ENV
+          echo "AK3_NAME=${ZIPNAME%.zip}" >> $GITHUB_ENV
+
+      - name: Upload AnyKernel3 ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ZIPNAME }}
-          path: ${{ github.workspace }}/${{ env.ZIPNAME }}
+          name: ${{ env.AK3_NAME }}
+          path: ${{ env.AK3_ZIP }}
 
       - name: Upload build log
         if: always()
