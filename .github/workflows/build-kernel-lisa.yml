@@ -240,16 +240,16 @@ jobs:
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           cat > init/ksu_stubs.c << 'STUBS_EOF'
-// SPDX-License-Identifier: GPL-2.0
-/*
- * Minimal SUSFS weak stub for inline hook mode.
- * susfs_extra_works() is called from ksu_handle_setresuid()
- * but may not be defined if SUSFS patch didn't fully apply.
- * This weak stub satisfies the linker; the real SUSFS
- * definition in fs/susfs.c overrides it when available.
- */
-void __attribute__((weak)) susfs_extra_works(void) { }
-STUBS_EOF
+          // SPDX-License-Identifier: GPL-2.0
+          /*
+           * Minimal SUSFS weak stub for inline hook mode.
+           * susfs_extra_works() is called from ksu_handle_setresuid()
+           * but may not be defined if SUSFS patch didn't fully apply.
+           * This weak stub satisfies the linker; the real SUSFS
+           * definition in fs/susfs.c overrides it when available.
+           */
+          void __attribute__((weak)) susfs_extra_works(void) { }
+          STUBS_EOF
 
           if ! grep -q "ksu_stubs" init/Makefile; then
             echo "" >> init/Makefile
