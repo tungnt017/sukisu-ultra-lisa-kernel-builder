@@ -89,8 +89,7 @@ jobs:
       - name: Integrate SukiSU-Ultra
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" \
-            | bash -s "${{ github.event.inputs.SUKISU_BRANCH }}"
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
           if [ -L "drivers/kernelsu" ]; then
             REAL=$(readlink -f "drivers/kernelsu")
             rm "drivers/kernelsu"
