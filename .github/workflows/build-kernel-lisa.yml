@@ -98,12 +98,12 @@ jobs:
           # 1. Add missing forward declarations to ksu.c
           TMPFILE=$(mktemp)
           cat > "$TMPFILE" << 'FIXEOF'
-/* === v28b minimal forward declarations === */
-__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }
-__attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }
-/* === end === */
-
-FIXEOF
+          /* === v28b minimal forward declarations === */
+          __attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }
+          __attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }
+          /* === end === */
+          
+          FIXEOF
           if [ -f "$KSU_C" ]; then
             cat "$TMPFILE" "$KSU_C" > "${KSU_C}.new"
             mv "${KSU_C}.new" "$KSU_C"
@@ -169,12 +169,12 @@ FIXEOF
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           cat > init/ksu_stubs.c << 'STUBS_EOF'
-// SPDX-License-Identifier: GPL-2.0
-/* Weak stub — ksu_handle_devpts not exported by builtin branch. */
-#include <linux/types.h>
-struct inode;
-int __attribute__((weak)) ksu_handle_devpts(struct inode *inode) { return 0; }
-STUBS_EOF
+          // SPDX-License-Identifier: GPL-2.0
+          /* Weak stub — ksu_handle_devpts not exported by builtin branch. */
+          #include <linux/types.h>
+          struct inode;
+          int __attribute__((weak)) ksu_handle_devpts(struct inode *inode) { return 0; }
+          STUBS_EOF
 
           if ! grep -q "ksu_stubs" init/Makefile; then
             echo "" >> init/Makefile
