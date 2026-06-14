@@ -86,12 +86,57 @@ jobs:
           echo "KSU_DIR=drivers/kernelsu" >> $GITHUB_ENV
 
       # ═══════════════════════════════════════════════════
-      #  v28: NO SUSFS! (Issue #771: SUSFS breaks driver
-      #  detection on non-GKI builtin branch)
-      #  SUSFS can be installed later via susfs4ksu-module
+      #  v28b: Fix KSU compile errors
+      #  (previously handled by compat block, now minimal)
       # ═══════════════════════════════════════════════════
+      - name: Fix KSU compile errors
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          set -e
+          KSU_C="drivers/kernelsu/ksu.c"
 
-      - name: Apply manual hook patches (v28 — direct call, no SUSFS)
+          # 1. Add missing forward declarations to ksu.c
+          TMPFILE=$(mktemp)
+          cat > "$TMPFILE" << 'FIXEOF'
+/* === v28b minimal forward declarations === */
+__attribute__((weak)) void ksu_selinux_hide_handle_post_fs_data(void) { }
+__attribute__((weak)) void ksu_selinux_hide_handle_second_stage(void) { }
+/* === end === */
+
+FIXEOF
+          if [ -f "$KSU_C" ]; then
+            cat "$TMPFILE" "$KSU_C" > "${KSU_C}.new"
+            mv "${KSU_C}.new" "$KSU_C"
+          fi
+          rm -f "$TMPFILE"
+
+          # 2. Fix sulog/event.c USER_ARG_NULL macro (pointer vs value)
+          EVENT_C="drivers/kernelsu/sulog/event.c"
+          if [ -f "$EVENT_C" ]; then
+            # Replace USER_ARG_NULL macro if it returns a pointer
+            sed -i 's/#define USER_ARG_NULL.*$/#define USER_ARG_NULL (\&(struct user_arg_ptr){ 0 })/' "$EVENT_C" 2>/dev/null || true
+          fi
+
+          # 3. Fix sucompat.c missing #endif (Issue #883)
+          SUCOMPAT_C="drivers/kernelsu/feature/sucompat.c"
+          if [ -f "$SUCOMPAT_C" ]; then
+            # Check if there's a missing #endif before "// dead code" comment
+            if grep -q "// dead code" "$SUCOMPAT_C" 2>/dev/null; then
+              DEAD_LINE=$(grep -n "// dead code" "$SUCOMPAT_C" | head -1 | cut -d: -f1)
+              if [ -n "$DEAD_LINE" ]; then
+                PREV_LINE=$((DEAD_LINE - 1))
+                PREV_CONTENT=$(sed -n "${PREV_LINE}p" "$SUCOMPAT_C")
+                if ! echo "$PREV_CONTENT" | grep -q "#endif"; then
+                  sed -i "${DEAD_LINE}i\\#endif" "$SUCOMPAT_C"
+                  echo "  [FIX] Added missing #endif in sucompat.c"
+                fi
+              fi
+            fi
+          fi
+
+          echo "  [OK] KSU compile fixes applied"
+
+      - name: Apply manual hook patches (v28b)
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           chmod +x $GITHUB_WORKSPACE/apply_hooks.sh
@@ -124,12 +169,12 @@ jobs:
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           cat > init/ksu_stubs.c << 'STUBS_EOF'
-          // SPDX-License-Identifier: GPL-2.0
-          /* Weak stub — ksu_handle_devpts not exported by builtin branch. */
-          #include <linux/types.h>
-          struct inode;
-          int __attribute__((weak)) ksu_handle_devpts(struct inode *inode) { return 0; }
-          STUBS_EOF
+// SPDX-License-Identifier: GPL-2.0
+/* Weak stub — ksu_handle_devpts not exported by builtin branch. */
+#include <linux/types.h>
+struct inode;
+int __attribute__((weak)) ksu_handle_devpts(struct inode *inode) { return 0; }
+STUBS_EOF
 
           if ! grep -q "ksu_stubs" init/Makefile; then
             echo "" >> init/Makefile
