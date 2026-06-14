@@ -12,9 +12,8 @@ find_line_after() {
 }
 echo ""
 echo "============================================"
-echo "  SukiSU-Ultra Manual Hook Patcher (v28)"
-echo "  Format: direct call, NO bool check"
-echo "  NO SUSFS (Issue #771 fix)"
+echo "  SukiSU-Ultra Manual Hook Patcher (v28b)"
+echo "  Direct call | NO bool | NO SUSFS"
 echo "============================================"
 echo ""
 
@@ -112,8 +111,8 @@ if grep -q "ksu_handle_input_handle_event" "$FILE"; then skip "already patched."
     fi
 fi
 
-info "Skipping devpts/inode.c (weak stub provides fallback)"
+info "Skipping devpts/inode.c (weak stub in init/ksu_stubs.c)"
 
 echo ""
-echo "  Hook patching complete (v28 — no SUSFS, direct call)."
+echo "  Hook patching complete (v28b)."
 echo ""
