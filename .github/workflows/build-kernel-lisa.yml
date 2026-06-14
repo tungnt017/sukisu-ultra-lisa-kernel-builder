@@ -14,9 +14,10 @@ on:
       SUKISU_BRANCH:
         description: "SukiSU-Ultra branch"
         required: true
-        default: "builtin"
+        default: "susfs-main"
         type: choice
         options:
+          - susfs-main
           - builtin
           - main
       DEFCONFIG:
@@ -36,19 +37,6 @@ on:
         required: false
         default: true
         type: boolean
-      ENABLE_SUSFS:
-        description: "Enable SUSFS"
-        required: false
-        default: true
-        type: boolean
-      SUSFS_REPO:
-        description: "SUSFS repo"
-        required: false
-        default: "https://github.com/ShirkNeko/susfs4ksu"
-      SUSFS_BRANCH:
-        description: "SUSFS branch"
-        required: false
-        default: "kernel-5.4"
 
 jobs:
   build:
@@ -86,7 +74,11 @@ jobs:
             $GITHUB_WORKSPACE/kernel
           echo "KERNEL_DIR=$GITHUB_WORKSPACE/kernel" >> $GITHUB_ENV
 
-      - name: Integrate SukiSU-Ultra
+      # ═══════════════════════════════════════════════════
+      #  v27: susfs-main branch — SUSFS already integrated!
+      #  No separate SUSFS clone/patch steps needed.
+      # ═══════════════════════════════════════════════════
+      - name: Integrate SukiSU-Ultra (susfs-main)
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" \
@@ -98,7 +90,7 @@ jobs:
           fi
           echo "KSU_DIR=drivers/kernelsu" >> $GITHUB_ENV
 
-      - name: Apply manual hook patches (v26b — direct call, no devpts)
+      - name: Apply manual hook patches (v27 — direct call)
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           chmod +x $GITHUB_WORKSPACE/apply_hooks.sh
@@ -131,13 +123,13 @@ jobs:
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           cat > init/ksu_stubs.c << 'STUBS_EOF'
-          // SPDX-License-Identifier: GPL-2.0
-          /* Weak stubs for symbols not exported by builtin branch. */
-          #include <linux/types.h>
-          struct inode;
-          int __attribute__((weak)) ksu_handle_devpts(struct inode *inode) { return 0; }
-          void __attribute__((weak)) susfs_extra_works(void) { }
-          STUBS_EOF
+// SPDX-License-Identifier: GPL-2.0
+/* Weak stubs for symbols not exported by susfs-main branch. */
+#include <linux/types.h>
+struct inode;
+int __attribute__((weak)) ksu_handle_devpts(struct inode *inode) { return 0; }
+void __attribute__((weak)) susfs_extra_works(void) { }
+STUBS_EOF
 
           if ! grep -q "ksu_stubs" init/Makefile; then
             echo "" >> init/Makefile
@@ -179,20 +171,20 @@ jobs:
             echo "CONFIG_KALLSYMS_ALL=y"
           } >> "$DC"
           [ "${{ github.event.inputs.ENABLE_KPM }}" = "true" ] && echo "CONFIG_KPM=y" >> "$DC"
-          if [ "${{ github.event.inputs.ENABLE_SUSFS }}" = "true" ]; then
-            {
-              echo "CONFIG_KSU_SUSFS=y"
-              echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
-              echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
-              echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
-              echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y"
-              echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
-              echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
-              echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
-              echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
-              echo "# CONFIG_KSU_SUSFS_SUS_SU is not set"
-            } >> "$DC"
-          fi
+          # SUSFS configs — susfs-main branch includes these automatically
+          # but we ensure they're set in defconfig too
+          {
+            echo "CONFIG_KSU_SUSFS=y"
+            echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
+            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y"
+            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+            echo "# CONFIG_KSU_SUSFS_SUS_SU is not set"
+          } >> "$DC"
 
       - name: Build kernel via build.sh
         working-directory: ${{ env.KERNEL_DIR }}
@@ -228,7 +220,7 @@ jobs:
         run: |
           ZIPNAME=$(grep -oP '(?<=^Zip: ).*\.zip$' $GITHUB_WORKSPACE/build.log | tail -1)
           if [ -z "$ZIPNAME" ]; then
-            ZIPNAME=$(find . -maxdepth 1 -name "*.zip" -newer build.sh 2>/dev/null | sort -t- -k5 -r | head -1 | sed 's|^\./||')
+            ZIPNAME=$(find . -maxdepth 1 -name "*.zip" -newer build.sh 2>/dev/null | sort -t- -k5 -r | head -1 | sed 's|^\.\/||')
           fi
 
           if [ -z "$ZIPNAME" ] || [ ! -f "$ZIPNAME" ]; then
