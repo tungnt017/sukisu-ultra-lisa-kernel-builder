@@ -1,7 +1,6 @@
 # AnyKernel3 — Xiaomi 11 Lite NE 5G (lisa)
-# Kernel + modules flash — no ramdisk (Android 12+ GKI)
 properties() { '
-kernel.string=SukiSU-Ultra + SUSFS Kernel for lisa
+kernel.string=SukiSU-Ultra Kernel for lisa
 do.devicecheck=1
 do.modules=1
 do.systemless=0
