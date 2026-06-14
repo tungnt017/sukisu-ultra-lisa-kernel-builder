@@ -123,13 +123,13 @@ jobs:
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           cat > init/ksu_stubs.c << 'STUBS_EOF'
-// SPDX-License-Identifier: GPL-2.0
-/* Weak stubs for symbols not exported by susfs-main branch. */
-#include <linux/types.h>
-struct inode;
-int __attribute__((weak)) ksu_handle_devpts(struct inode *inode) { return 0; }
-void __attribute__((weak)) susfs_extra_works(void) { }
-STUBS_EOF
+          // SPDX-License-Identifier: GPL-2.0
+          /* Weak stubs for symbols not exported by susfs-main branch. */
+          #include <linux/types.h>
+          struct inode;
+          int __attribute__((weak)) ksu_handle_devpts(struct inode *inode) { return 0; }
+          void __attribute__((weak)) susfs_extra_works(void) { }
+          STUBS_EOF
 
           if ! grep -q "ksu_stubs" init/Makefile; then
             echo "" >> init/Makefile
