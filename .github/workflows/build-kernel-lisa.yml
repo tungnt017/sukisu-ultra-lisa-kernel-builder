@@ -14,10 +14,9 @@ on:
       SUKISU_BRANCH:
         description: "SukiSU-Ultra branch"
         required: true
-        default: "susfs-main"
+        default: "builtin"
         type: choice
         options:
-          - susfs-main
           - builtin
           - main
       DEFCONFIG:
@@ -74,11 +73,7 @@ jobs:
             $GITHUB_WORKSPACE/kernel
           echo "KERNEL_DIR=$GITHUB_WORKSPACE/kernel" >> $GITHUB_ENV
 
-      # ═══════════════════════════════════════════════════
-      #  v27: susfs-main branch — SUSFS already integrated!
-      #  No separate SUSFS clone/patch steps needed.
-      # ═══════════════════════════════════════════════════
-      - name: Integrate SukiSU-Ultra (susfs-main)
+      - name: Integrate SukiSU-Ultra
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" \
@@ -90,7 +85,13 @@ jobs:
           fi
           echo "KSU_DIR=drivers/kernelsu" >> $GITHUB_ENV
 
-      - name: Apply manual hook patches (v27 — direct call)
+      # ═══════════════════════════════════════════════════
+      #  v28: NO SUSFS! (Issue #771: SUSFS breaks driver
+      #  detection on non-GKI builtin branch)
+      #  SUSFS can be installed later via susfs4ksu-module
+      # ═══════════════════════════════════════════════════
+
+      - name: Apply manual hook patches (v28 — direct call, no SUSFS)
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           chmod +x $GITHUB_WORKSPACE/apply_hooks.sh
@@ -123,13 +124,12 @@ jobs:
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
           cat > init/ksu_stubs.c << 'STUBS_EOF'
-          // SPDX-License-Identifier: GPL-2.0
-          /* Weak stubs for symbols not exported by susfs-main branch. */
-          #include <linux/types.h>
-          struct inode;
-          int __attribute__((weak)) ksu_handle_devpts(struct inode *inode) { return 0; }
-          void __attribute__((weak)) susfs_extra_works(void) { }
-          STUBS_EOF
+// SPDX-License-Identifier: GPL-2.0
+/* Weak stub — ksu_handle_devpts not exported by builtin branch. */
+#include <linux/types.h>
+struct inode;
+int __attribute__((weak)) ksu_handle_devpts(struct inode *inode) { return 0; }
+STUBS_EOF
 
           if ! grep -q "ksu_stubs" init/Makefile; then
             echo "" >> init/Makefile
@@ -150,11 +150,6 @@ jobs:
             sed -i 's/subdir-ccflags-\$(CONFIG_KSU)/subdir-ccflags-y/g' "$KSU_MK"
           }
 
-          [ -f "fs/susfs.c" ] && {
-            sed -i '/susfs/d' fs/Makefile
-            echo "obj-y += susfs.o" >> fs/Makefile
-          }
-
           if [ -f "drivers/Kconfig" ] && ! grep -q "kernelsu" "drivers/Kconfig"; then
             ENDMENU=$(grep -n "^endmenu" "drivers/Kconfig" | tail -1 | cut -d: -f1)
             [ -n "$ENDMENU" ] && sed -i "${ENDMENU}i\\source \"drivers/kernelsu/Kconfig\"" "drivers/Kconfig"
@@ -169,22 +164,9 @@ jobs:
             echo "# CONFIG_KPROBES is not set"
             echo "CONFIG_KALLSYMS=y"
             echo "CONFIG_KALLSYMS_ALL=y"
+            echo "# CONFIG_KSU_SUSFS is not set"
           } >> "$DC"
           [ "${{ github.event.inputs.ENABLE_KPM }}" = "true" ] && echo "CONFIG_KPM=y" >> "$DC"
-          # SUSFS configs — susfs-main branch includes these automatically
-          # but we ensure they're set in defconfig too
-          {
-            echo "CONFIG_KSU_SUSFS=y"
-            echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
-            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
-            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
-            echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y"
-            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
-            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
-            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
-            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
-            echo "# CONFIG_KSU_SUSFS_SUS_SU is not set"
-          } >> "$DC"
 
       - name: Build kernel via build.sh
         working-directory: ${{ env.KERNEL_DIR }}
@@ -220,7 +202,7 @@ jobs:
         run: |
           ZIPNAME=$(grep -oP '(?<=^Zip: ).*\.zip$' $GITHUB_WORKSPACE/build.log | tail -1)
           if [ -z "$ZIPNAME" ]; then
-            ZIPNAME=$(find . -maxdepth 1 -name "*.zip" -newer build.sh 2>/dev/null | sort -t- -k5 -r | head -1 | sed 's|^\.\/||')
+            ZIPNAME=$(find . -maxdepth 1 -name "*.zip" -newer build.sh 2>/dev/null | sort -t- -k5 -r | head -1 | sed 's|^\./||')
           fi
 
           if [ -z "$ZIPNAME" ] || [ ! -f "$ZIPNAME" ]; then
