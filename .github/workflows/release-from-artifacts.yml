@@ -1,0 +1,77 @@
+name: Upload Release From Artifacts
+
+on:
+  workflow_run:
+    workflows:
+      - Build Xiaomi Lisa Kernel
+    types:
+      - completed
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    name: Create release from build artifact
+    runs-on: ubuntu-22.04
+
+    if: github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download artifact from completed workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          mkdir -p downloaded-artifacts
+
+          echo "Downloading artifacts from workflow run: $RUN_ID"
+
+          gh run download "$RUN_ID" \
+            --dir downloaded-artifacts
+
+          echo "Downloaded files:"
+          find downloaded-artifacts -type f -print
+
+      - name: Find ZIP file
+        id: find_zip
+        run: |
+          ZIP_FILE="$(find downloaded-artifacts -type f -name "*.zip" | head -n 1)"
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "No ZIP file found in artifacts!"
+            exit 1
+          fi
+
+          echo "Found ZIP: $ZIP_FILE"
+          echo "zip_path=$ZIP_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release info
+        id: release_info
+        run: |
+          TAG_NAME="kernel-${{ github.event.workflow_run.run_number }}"
+          RELEASE_NAME="Xiaomi Lisa Kernel Build ${{ github.event.workflow_run.run_number }}"
+
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release and upload ZIP
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_info.outputs.tag_name }}
+          name: ${{ steps.release_info.outputs.release_name }}
+          body: |
+            Automated kernel release from GitHub Actions artifact.
+
+            Device: Xiaomi 11 Lite NE 5G / lisa
+            Source workflow: ${{ github.event.workflow_run.name }}
+            Build run number: ${{ github.event.workflow_run.run_number }}
+            Build run ID: ${{ github.event.workflow_run.id }}
+            Commit: ${{ github.event.workflow_run.head_sha }}
+          files: ${{ steps.find_zip.outputs.zip_path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
