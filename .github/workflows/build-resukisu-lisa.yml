@@ -91,11 +91,11 @@ jobs:
           set_config() {
             local key="$1"
             local value="$2"
-            if grep -qE "^# ${key} is not set$|^${key}=" "$DEFCONFIG_PATH"; then
-              sed -i -E "s#^# ${key} is not set$|^${key}=.*#${key}=${value}#" "$DEFCONFIG_PATH"
-            else
-              printf '\n%s=%s\n' "$key" "$value" >> "$DEFCONFIG_PATH"
-            fi
+          
+            sed -i -E "/^${key}=.*/d" "$DEFCONFIG_PATH"
+            sed -i -E "/^# ${key} is not set$/d" "$DEFCONFIG_PATH"
+          
+            printf '\n%s=%s\n' "$key" "$value" >> "$DEFCONFIG_PATH"
           }
 
           set_config CONFIG_KSU y
