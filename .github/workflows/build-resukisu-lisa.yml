@@ -33,6 +33,7 @@ jobs:
       - name: Checkout kernel source
         uses: actions/checkout@v4
         with:
+          repository: MirahSyakilla/android_kernel_xiaomi_lisa
           ref: resukisu
           fetch-depth: 1
 
