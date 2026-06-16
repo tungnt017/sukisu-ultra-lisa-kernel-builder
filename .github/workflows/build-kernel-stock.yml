@@ -2,11 +2,6 @@ name: Build Xiaomi Lisa Kernel
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - thirteen
-      - main
-      - master
 
 jobs:
   build:
@@ -14,19 +9,22 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout source
+      - name: Checkout kernel source
         uses: actions/checkout@v4
         with:
+          repository: PixelExperience-Devices/kernel_xiaomi_lisa
+          ref: thirteen
           fetch-depth: 1
+          path: kernel
 
-      - name: Free disk space
+      - name: Show files
         run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/lib/android
-          df -h
+          pwd
+          ls -la
+          echo "Kernel folder:"
+          ls -la kernel
 
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           sudo apt update
           sudo apt install -y \
@@ -49,17 +47,13 @@ jobs:
             unzip \
             xz-utils
 
-      - name: Setup ccache
-        run: |
-          mkdir -p ~/.ccache
-          ccache -M 5G
-          ccache -s
-
       - name: Make build script executable
+        working-directory: kernel
         run: |
           chmod +x build.sh
 
       - name: Build kernel
+        working-directory: kernel
         run: |
           export ARCH=arm64
           export SUBARCH=arm64
@@ -69,10 +63,10 @@ jobs:
 
           ./build.sh
 
-      - name: Show build outputs
+      - name: Find build outputs
         if: always()
+        working-directory: kernel
         run: |
-          echo "Possible kernel outputs:"
           find . -type f \( \
             -name "Image" -o \
             -name "Image.gz" -o \
@@ -83,17 +77,17 @@ jobs:
             -name "*.zip" \
           \) -print || true
 
-      - name: Upload kernel artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         if: success()
         with:
           name: xiaomi-lisa-kernel
           path: |
-            **/Image
-            **/Image.gz
-            **/Image.gz-dtb
-            **/*.dtb
-            **/dtbo.img
-            **/*.ko
-            **/*.zip
+            kernel/**/Image
+            kernel/**/Image.gz
+            kernel/**/Image.gz-dtb
+            kernel/**/*.dtb
+            kernel/**/dtbo.img
+            kernel/**/*.ko
+            kernel/**/*.zip
           if-no-files-found: warn
