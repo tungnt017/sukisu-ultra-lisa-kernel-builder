@@ -86,11 +86,10 @@ jobs:
             $GITHUB_WORKSPACE/kernel
           echo "KERNEL_DIR=$GITHUB_WORKSPACE/kernel" >> $GITHUB_ENV
 
-      - name: Integrate SukiSU-Ultra
+      - name: Integrate Ksun
         working-directory: ${{ env.KERNEL_DIR }}
         run: |
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" \
-            | bash -s "${{ github.event.inputs.SUKISU_BRANCH }}"
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
           if [ -L "drivers/kernelsu" ]; then
             REAL=$(readlink -f "drivers/kernelsu")
             rm "drivers/kernelsu"
