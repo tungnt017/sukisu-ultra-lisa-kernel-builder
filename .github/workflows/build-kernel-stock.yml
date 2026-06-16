@@ -1,0 +1,99 @@
+name: Build Xiaomi Lisa Kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - thirteen
+      - main
+      - master
+
+jobs:
+  build:
+    name: Build kernel
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/lib/android
+          df -h
+
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            bc \
+            bison \
+            build-essential \
+            ccache \
+            curl \
+            flex \
+            git \
+            kmod \
+            libelf-dev \
+            libssl-dev \
+            lld \
+            llvm \
+            make \
+            python3 \
+            python-is-python3 \
+            zip \
+            unzip \
+            xz-utils
+
+      - name: Setup ccache
+        run: |
+          mkdir -p ~/.ccache
+          ccache -M 5G
+          ccache -s
+
+      - name: Make build script executable
+        run: |
+          chmod +x build.sh
+
+      - name: Build kernel
+        run: |
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export KBUILD_BUILD_USER=github
+          export KBUILD_BUILD_HOST=actions
+          export USE_CCACHE=1
+
+          ./build.sh
+
+      - name: Show build outputs
+        if: always()
+        run: |
+          echo "Possible kernel outputs:"
+          find . -type f \( \
+            -name "Image" -o \
+            -name "Image.gz" -o \
+            -name "Image.gz-dtb" -o \
+            -name "*.dtb" -o \
+            -name "dtbo.img" -o \
+            -name "*.ko" -o \
+            -name "*.zip" \
+          \) -print || true
+
+      - name: Upload kernel artifacts
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: xiaomi-lisa-kernel
+          path: |
+            **/Image
+            **/Image.gz
+            **/Image.gz-dtb
+            **/*.dtb
+            **/dtbo.img
+            **/*.ko
+            **/*.zip
+          if-no-files-found: warn
