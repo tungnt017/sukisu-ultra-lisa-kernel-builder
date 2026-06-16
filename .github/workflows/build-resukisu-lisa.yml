@@ -1,0 +1,191 @@
+name: Build Xiaomi Lisa Kernel With ReSukiSU
+
+on:
+  workflow_dispatch:
+    inputs:
+      defconfig:
+        description: "Kernel defconfig target, e.g. vendor/lisa_defconfig. Leave empty for auto-detect."
+        required: false
+        default: ""
+      use_susfs:
+        description: "Enable CONFIG_KSU_SUSFS instead of CONFIG_KSU_MANUAL_HOOK. SUSFS kernel patches are NOT applied by this workflow."
+        required: true
+        type: boolean
+        default: false
+      make_jobs:
+        description: "Parallel make jobs"
+        required: false
+        default: "4"
+  push:
+    branches:
+      - resukisu
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build kernel
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          ref: resukisu
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential ca-certificates ccache clang curl flex git \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libelf-dev libssl-dev \
+            lld llvm make python3 rsync unzip zip zstd
+
+      - name: Add ReSukiSU to kernel source tree
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+
+      - name: Detect and patch defconfig
+        id: defconfig
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          INPUT_DEFCONFIG="${{ github.event.inputs.defconfig }}"
+
+          if [ -n "$INPUT_DEFCONFIG" ]; then
+            DEFCONFIG="$INPUT_DEFCONFIG"
+          else
+            # Prefer lisa-specific defconfigs, then lahaina/qgki/gki fallbacks.
+            DEFCONFIG="$(find arch/arm64/configs -type f \
+              \( -iname '*lisa*defconfig' -o -iname '*lahaina*defconfig' -o -iname '*qgki*defconfig' -o -iname 'gki_defconfig' \) \
+              | sed 's#^arch/arm64/configs/##' \
+              | sort \
+              | head -n 1)"
+          fi
+
+          if [ -z "$DEFCONFIG" ]; then
+            echo "No defconfig found. Pass one manually from Actions > Run workflow > defconfig."
+            echo "Available defconfigs:"
+            find arch/arm64/configs -type f -iname '*defconfig' | sed 's#^arch/arm64/configs/##' | sort | head -n 200
+            exit 1
+          fi
+
+          DEFCONFIG_PATH="arch/arm64/configs/$DEFCONFIG"
+          if [ ! -f "$DEFCONFIG_PATH" ]; then
+            echo "Defconfig does not exist: $DEFCONFIG_PATH"
+            echo "Available defconfigs:"
+            find arch/arm64/configs -type f -iname '*defconfig' | sed 's#^arch/arm64/configs/##' | sort | head -n 200
+            exit 1
+          fi
+
+          echo "Using defconfig: $DEFCONFIG"
+          echo "defconfig=$DEFCONFIG" >> "$GITHUB_OUTPUT"
+
+          set_config() {
+            local key="$1"
+            local value="$2"
+            if grep -qE "^# ${key} is not set$|^${key}=" "$DEFCONFIG_PATH"; then
+              sed -i -E "s#^# ${key} is not set$|^${key}=.*#${key}=${value}#" "$DEFCONFIG_PATH"
+            else
+              printf '\n%s=%s\n' "$key" "$value" >> "$DEFCONFIG_PATH"
+            fi
+          }
+
+          set_config CONFIG_KSU y
+
+          if [ "${{ github.event.inputs.use_susfs }}" = "true" ]; then
+            set_config CONFIG_KSU_SUSFS y
+            sed -i -E '/^CONFIG_KSU_MANUAL_HOOK=/d;/^# CONFIG_KSU_MANUAL_HOOK is not set$/d' "$DEFCONFIG_PATH"
+          else
+            set_config CONFIG_KSU_MANUAL_HOOK y
+            sed -i -E '/^CONFIG_KSU_SUSFS=/d;/^# CONFIG_KSU_SUSFS is not set$/d' "$DEFCONFIG_PATH"
+          fi
+
+          echo "ReSukiSU config lines:"
+          grep -n "CONFIG_KSU" "$DEFCONFIG_PATH" || true
+
+      - name: Build kernel
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export KBUILD_BUILD_USER=github
+          export KBUILD_BUILD_HOST=actions
+          export CCACHE_DIR="$GITHUB_WORKSPACE/.ccache"
+          export PATH="/usr/lib/ccache:$PATH"
+          ccache -M 5G
+
+          DEFCONFIG="${{ steps.defconfig.outputs.defconfig }}"
+          JOBS="${{ github.event.inputs.make_jobs }}"
+          if [ -z "$JOBS" ]; then JOBS=4; fi
+
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            "$DEFCONFIG"
+
+          make -j"$JOBS" O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
+      - name: Collect build artifacts
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts
+
+          for f in \
+            out/arch/arm64/boot/Image.gz-dtb \
+            out/arch/arm64/boot/Image.gz \
+            out/arch/arm64/boot/Image \
+            out/arch/arm64/boot/dtbo.img \
+            out/arch/arm64/boot/dts/vendor/qcom/*.dtb \
+            out/arch/arm64/boot/dts/vendor/qcom/*.dtbo; do
+            if ls $f >/dev/null 2>&1; then
+              cp -av $f artifacts/ || true
+            fi
+          done
+
+          cp -av out/.config artifacts/kernel_config || true
+          find artifacts -maxdepth 1 -type f -print
+
+      - name: Optional AnyKernel3 zip
+        shell: bash
+        run: |
+          set -euxo pipefail
+          IMAGE=""
+          for f in artifacts/Image.gz-dtb artifacts/Image.gz artifacts/Image; do
+            if [ -f "$f" ]; then IMAGE="$f"; break; fi
+          done
+          if [ -z "$IMAGE" ]; then
+            echo "No kernel Image found; skipping AnyKernel3 zip."
+            exit 0
+          fi
+
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+          rm -rf AnyKernel3/.git AnyKernel3/.github AnyKernel3/README.md
+          cp -av "$IMAGE" AnyKernel3/
+          cd AnyKernel3
+
+          # Basic lisa identifiers. Review anykernel.sh before flashing on a real device.
+          sed -i 's/^device.name1=.*/device.name1=lisa/' anykernel.sh || true
+          sed -i 's/^device.name2=.*/device.name2=Mi 11 Lite 5G NE/' anykernel.sh || true
+          sed -i 's/^device.name3=.*/device.name3=Mi 11 LE/' anykernel.sh || true
+          sed -i 's/^do.devicecheck=.*/do.devicecheck=1/' anykernel.sh || true
+
+          ZIP_NAME="MeowKernel-ReSukiSU-lisa-${GITHUB_SHA::7}.zip"
+          zip -r9 "../artifacts/$ZIP_NAME" ./*
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lisa-resukisu-kernel-${{ github.sha }}
+          path: artifacts/*
+          if-no-files-found: error
