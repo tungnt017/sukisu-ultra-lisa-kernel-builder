@@ -1,0 +1,140 @@
+name: Upload Private ROM Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: "Direct URL to ROM ZIP"
+        required: true
+        type: string
+
+      boot_url:
+        description: "Direct URL to boot.img"
+        required: false
+        type: string
+
+      dtbo_url:
+        description: "Direct URL to dtbo.img"
+        required: false
+        type: string
+
+      vendor_boot_url:
+        description: "Direct URL to vendor_boot.img"
+        required: false
+        type: string
+
+      recovery_url:
+        description: "Direct URL to recovery.img"
+        required: false
+        type: string
+
+      tag_name:
+        description: "Release tag, example: lisa-20260711"
+        required: true
+        type: string
+
+      release_name:
+        description: "Release name"
+        required: false
+        default: "Private ROM Release"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare download directory
+        run: |
+          mkdir -p release-files
+          : > downloaded-files.txt
+
+      - name: Download files
+        shell: bash
+        run: |
+          download_file() {
+            local url="$1"
+            local fallback_name="$2"
+
+            if [ -z "$url" ]; then
+              return 0
+            fi
+
+            local file_name
+            file_name="$(basename "${url%%\?*}")"
+
+            if [ -z "$file_name" ] || [ "$file_name" = "/" ] || [ "$file_name" = "." ]; then
+              file_name="$fallback_name"
+            fi
+
+            echo "Downloading:"
+            echo "URL: $url"
+            echo "File: $file_name"
+
+            curl -L --fail --retry 5 --retry-delay 10 \
+              -o "release-files/$file_name" \
+              "$url"
+
+            echo "$file_name" >> downloaded-files.txt
+          }
+
+          download_file "${{ inputs.zip_url }}" "rom.zip"
+          download_file "${{ inputs.boot_url }}" "boot.img"
+          download_file "${{ inputs.dtbo_url }}" "dtbo.img"
+          download_file "${{ inputs.vendor_boot_url }}" "vendor_boot.img"
+          download_file "${{ inputs.recovery_url }}" "recovery.img"
+
+      - name: Show downloaded files
+        run: |
+          ls -lh release-files
+
+      - name: Generate SHA256 checksums
+        run: |
+          cd release-files
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create release notes
+        run: |
+          {
+            echo "## Private ROM Release"
+            echo ""
+            echo "This release is stored in a private repository."
+            echo ""
+            echo "## Files"
+            echo ""
+
+            while read -r file; do
+              echo "- $file"
+            done < downloaded-files.txt
+
+            echo "- SHA256SUMS.txt"
+            echo ""
+            echo "## SHA256"
+            echo ""
+            echo '```text'
+            cat release-files/SHA256SUMS.txt
+            echo '```'
+          } > release-notes.md
+
+      - name: Create or update private GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ inputs.tag_name }}" >/dev/null 2>&1; then
+            gh release upload "${{ inputs.tag_name }}" release-files/* --clobber
+            gh release edit "${{ inputs.tag_name }}" \
+              --title "${{ inputs.release_name }}" \
+              --notes-file release-notes.md
+          else
+            gh release create "${{ inputs.tag_name }}" \
+              release-files/* \
+              --title "${{ inputs.release_name }}" \
+              --notes-file release-notes.md
+          fi
